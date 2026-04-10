@@ -1,0 +1,6 @@
+.dotnet-cli-home/
+.launcher/
+dist/
+tools/
+ItemEditorLauncherExe/bin/
+ItemEditorLauncherExe/obj/

@@ -1,0 +1,11 @@
+.gradle/
+.gradle-user-home/
+.idea/
+build/
+recent_paths.dat
+launcher/.dotnet-cli-home/
+launcher/tools/
+launcher/dist-build/
+launcher/dist-build-*/
+launcher/ItemEditorLauncherExe/bin/
+launcher/ItemEditorLauncherExe/obj/

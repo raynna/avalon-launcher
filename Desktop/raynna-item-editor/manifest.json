@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0",
+  "zipUrl": "https://raw.githubusercontent.com/raynna/raynna-item-editor-release/main/releases/raynna-item-editor-1.0.0-windows.zip",
+  "zipSha256": "replace-with-sha256",
+  "notes": "Configure release-config.json before publishing"
+}

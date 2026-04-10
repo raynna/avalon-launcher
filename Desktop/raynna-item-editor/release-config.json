@@ -1,0 +1,15 @@
+{
+  "appName": "Raynna Item Editor",
+  "sourceRepo": ".",
+  "publishRepo": "publish-repo",
+  "manifestPath": "manifest.json",
+  "releaseDirectory": "releases",
+  "publishLauncherDirectory": "launcher",
+  "assetFileNameTemplate": "raynna-item-editor-{version}-windows.zip",
+  "rawBaseUrl": "https://raw.githubusercontent.com/raynna/raynna-item-editor-release/main",
+  "branch": "main",
+  "gradleTask": "clean packageWindowsZip",
+  "buildOutput": "build/distributions/raynna-item-editor-windows.zip",
+  "launcherBuildScript": "launcher/build-exe.ps1",
+  "launcherDist": "launcher/dist"
+}
