@@ -29,11 +29,37 @@ if (-not (Test-Path -LiteralPath $cliHome))
 
 $project = Join-Path $launcherRoot "ItemEditorLauncherExe\ItemEditorLauncherExe.csproj"
 $dist = Join-Path $launcherRoot "dist"
+$distFallbackRoot = Join-Path $launcherRoot "dist-build"
+$publishOutput = $dist
+
 if (Test-Path -LiteralPath $dist)
 {
-    Remove-Item -LiteralPath $dist -Recurse -Force
+    try
+    {
+        Remove-Item -LiteralPath $dist -Recurse -Force
+    }
+    catch
+    {
+        $publishOutput = $distFallbackRoot
+        if (Test-Path -LiteralPath $publishOutput)
+        {
+            try
+            {
+                Remove-Item -LiteralPath $publishOutput -Recurse -Force
+            }
+            catch
+            {
+                $publishOutput = Join-Path $launcherRoot ("dist-build-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+            }
+        }
+    }
 }
-New-Item -ItemType Directory -Path $dist | Out-Null
+
+if (Test-Path -LiteralPath $publishOutput)
+{
+    Remove-Item -LiteralPath $publishOutput -Recurse -Force
+}
+New-Item -ItemType Directory -Path $publishOutput | Out-Null
 
 & $dotnet publish $project `
     -c Release `
@@ -43,20 +69,20 @@ New-Item -ItemType Directory -Path $dist | Out-Null
     -p:EnableCompressionInSingleFile=true `
     -p:IncludeNativeLibrariesForSelfExtract=true `
     -p:InvariantGlobalization=true `
-    -p:DebugSymbols=false `
-    -p:DebugType=None `
-    -p:PublishTrimmed=false `
-    --source https://api.nuget.org/v3/index.json `
-    -o $dist
+	-p:DebugSymbols=false `
+	-p:DebugType=None `
+	-p:PublishTrimmed=false `
+	--source https://api.nuget.org/v3/index.json `
+	-o $publishOutput
 
-$pdb = Join-Path $dist "ItemEditorLauncher.pdb"
+$pdb = Join-Path $publishOutput "ItemEditorLauncher.pdb"
 if (Test-Path -LiteralPath $pdb)
 {
-    Remove-Item -LiteralPath $pdb -Force
+	Remove-Item -LiteralPath $pdb -Force
 }
 
-Copy-Item -LiteralPath (Join-Path $launcherRoot "launcher-config.json") -Destination (Join-Path $dist "launcher-config.json") -Force
-Copy-Item -LiteralPath (Join-Path $launcherRoot "launch-item-editor.bat") -Destination (Join-Path $dist "launch-item-editor.bat") -Force
-Copy-Item -LiteralPath (Join-Path $launcherRoot "README.md") -Destination (Join-Path $dist "README.md") -Force
+Copy-Item -LiteralPath (Join-Path $launcherRoot "launcher-config.json") -Destination (Join-Path $publishOutput "launcher-config.json") -Force
+Copy-Item -LiteralPath (Join-Path $launcherRoot "launch-item-editor.bat") -Destination (Join-Path $publishOutput "launch-item-editor.bat") -Force
+Copy-Item -LiteralPath (Join-Path $launcherRoot "README.md") -Destination (Join-Path $publishOutput "README.md") -Force
 
-Write-Host "Launcher build complete: $dist\ItemEditorLauncher.exe"
+Write-Host "Launcher build complete: $publishOutput\ItemEditorLauncher.exe"

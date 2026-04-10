@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.IO;
 using System.IO.Compression;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -29,7 +30,8 @@ internal sealed class MainForm : Form
     private string RuntimeDir => Path.Combine(DataDir, "runtime");
     private string PackageDir => Path.Combine(DataDir, "editor");
     private string StatePath => Path.Combine(DataDir, "state.json");
-    private string LaunchScriptPath => Path.Combine(PackageDir, "run-item-editor.bat");
+    private string LogPath => Path.Combine(DataDir, "launcher.log");
+    private string LaunchScriptPath => Path.Combine(PackageDir, "app", "bin", "raynna-item-editor.bat");
 
     public MainForm()
     {
@@ -105,14 +107,17 @@ internal sealed class MainForm : Form
     {
         try
         {
-            _config = ReadJsonFile<LauncherConfig>(ConfigPath) ?? throw new InvalidOperationException("launcher-config.json is missing or invalid.");
+            Log("Launcher starting.");
+            _config = ReadJsonFile<LauncherConfig>(ConfigPath) ?? new LauncherConfig();
             _state = ReadJsonFile<StateModel>(StatePath) ?? new StateModel();
             Text = _config.AppName;
             _versionLabel.Text = $"Installed version: {DefaultIfEmpty(_state.InstalledVersion, "none")}";
             _statusLabel.Text = "Ready";
+            Log($"Launcher initialized. InstalledVersion={_state.InstalledVersion} ConfigPathFound={File.Exists(ConfigPath)}");
         }
         catch (Exception ex)
         {
+            Log($"Initialize failed: {ex}");
             SetStatus($"Failed: {ex.Message}");
             SetBusy(true);
             MessageBox.Show(this, ex.Message, "Launcher Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -126,10 +131,13 @@ internal sealed class MainForm : Form
         try
         {
             EnsureDirectory(DataDir);
+            Log("Launch requested.");
             SetStatus("Fetching manifest..."); SetProgress(8);
             var manifest = await GetManifestAsync(_config);
-            var javaExe = await EnsureJavaRuntimeAsync(_config);
+            Log($"Manifest loaded. Version={manifest.Version} ZipUrl={manifest.ZipUrl}");
             await EnsureEditorPackageAsync(_config, manifest);
+            var javaExe = await EnsureJavaRuntimeAsync(_config);
+            Log($"Java resolved: {javaExe}");
             _versionLabel.Text = $"Installed version: {DefaultIfEmpty(_state.InstalledVersion, "none")}";
             SetStatus("Starting editor..."); SetProgress(100);
             StartEditor(javaExe);
@@ -137,8 +145,9 @@ internal sealed class MainForm : Form
         }
         catch (Exception ex)
         {
+            Log($"Launch flow failed: {ex}");
             SetProgress(0); SetStatus($"Failed: {ex.Message}");
-            MessageBox.Show(this, ex.Message, "Launcher Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(this, $"{ex.Message}{Environment.NewLine}{Environment.NewLine}Log: {LogPath}", "Launcher Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
         finally
         {
@@ -150,17 +159,23 @@ internal sealed class MainForm : Form
     {
         var preferred = Math.Max(8, config.Java.PreferredMajorVersion);
         var bundled = FindBundledJava(RuntimeDir);
+        Log($"Checking bundled Java in {RuntimeDir}");
         if (!string.IsNullOrWhiteSpace(bundled) && GetJavaMajorVersion(bundled) >= preferred) return bundled;
         var system = FindSystemJava();
-        if (!string.IsNullOrWhiteSpace(system) && GetJavaMajorVersion(system) >= preferred) return system;
+        Log($"Checking system Java result: {system}");
+        if (!string.IsNullOrWhiteSpace(system) && GetJavaMajorVersion(system) >= preferred && !string.IsNullOrWhiteSpace(TryGetJavaHomeFromExe(system))) return system;
         if (string.IsNullOrWhiteSpace(config.Java.DownloadUrl)) throw new InvalidOperationException("java.downloadUrl is missing in launcher-config.json");
 
-        SetStatus("Installing Java runtime..."); SetProgress(35);
+        SetStatus($"Missing Java {preferred}+ runtime."); SetProgress(35);
+        await Task.Delay(500);
+        SetStatus("Installing Java runtime..."); SetProgress(45);
         var tempZip = Path.Combine(DataDir, "java-runtime.zip");
         TryDeleteFile(tempZip);
         if (Directory.Exists(RuntimeDir)) Directory.Delete(RuntimeDir, true);
         EnsureDirectory(RuntimeDir);
+        Log($"Downloading Java from {config.Java.DownloadUrl}");
         await DownloadOrCopyAsync(config.Java.DownloadUrl, tempZip);
+        SetStatus("Extracting Java runtime..."); SetProgress(58);
         ZipFile.ExtractToDirectory(tempZip, RuntimeDir, true);
         TryDeleteFile(tempZip);
 
@@ -177,7 +192,8 @@ internal sealed class MainForm : Form
         var needsDownload = !File.Exists(LaunchScriptPath) || !string.Equals(_state.InstalledVersion, manifest.Version, StringComparison.Ordinal);
         if (needsDownload)
         {
-            SetStatus($"Updating editor to {manifest.Version}..."); SetProgress(55);
+            SetStatus($"Installing editor {manifest.Version}..."); SetProgress(28);
+            Log($"Installing editor package {manifest.Version}");
             var tempZip = Path.Combine(DataDir, "editor-package.zip");
             var tempExtract = Path.Combine(DataDir, "editor-extract");
             var backupDir = Path.Combine(DataDir, "editor-backup");
@@ -187,19 +203,21 @@ internal sealed class MainForm : Form
             if (Directory.Exists(backupDir)) Directory.Delete(backupDir, true);
 
             await DownloadOrCopyAsync(manifest.ZipUrl, tempZip);
+            Log($"Editor package downloaded to {tempZip}");
 
             if (!string.IsNullOrWhiteSpace(manifest.ZipSha256))
             {
-                SetStatus("Validating package checksum..."); SetProgress(72);
+                SetStatus("Validating editor package..."); SetProgress(52);
                 var expected = manifest.ZipSha256.Trim().ToLowerInvariant();
                 var actual = GetSha256(tempZip);
                 if (!string.Equals(actual, expected, StringComparison.Ordinal))
                     throw new InvalidOperationException("Downloaded editor package failed checksum validation.");
             }
 
-            SetStatus("Installing editor..."); SetProgress(82);
+            SetStatus("Extracting editor files..."); SetProgress(68);
             EnsureDirectory(tempExtract);
             ZipFile.ExtractToDirectory(tempZip, tempExtract, true);
+            Log($"Editor package extracted to {tempExtract}");
             TryDeleteFile(tempZip);
 
             if (Directory.Exists(PackageDir))
@@ -212,32 +230,82 @@ internal sealed class MainForm : Form
                 Directory.Delete(backupDir, true);
             }
         }
+        else
+        {
+            SetStatus("Editor already installed."); SetProgress(25);
+        }
 
         if (!File.Exists(LaunchScriptPath))
-            throw new InvalidOperationException("Installed editor launcher was not found after extraction.");
+            throw new InvalidOperationException("Installed editor app script was not found after extraction.");
 
         _state.InstalledVersion = manifest.Version;
         _state.InstalledAtUtc = DateTime.UtcNow.ToString("O");
         WriteState();
+        Log($"Editor package ready. LaunchScriptPath={LaunchScriptPath}");
     }
 
     private void StartEditor(string javaExe)
     {
-        var javaHome = Path.GetDirectoryName(Path.GetDirectoryName(javaExe) ?? string.Empty) ?? string.Empty;
+        var javaBinDir = Path.GetDirectoryName(javaExe) ?? string.Empty;
+        var javaHome = TryGetJavaHomeFromExe(javaExe);
+        Log($"Starting editor script via cmd.exe. Script={LaunchScriptPath} JavaHome={javaHome}");
         var psi = new ProcessStartInfo
         {
             FileName = "cmd.exe",
-            WorkingDirectory = PackageDir,
-            UseShellExecute = false
+            WorkingDirectory = Path.GetDirectoryName(LaunchScriptPath) ?? PackageDir,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
         };
         psi.ArgumentList.Add("/c");
         psi.ArgumentList.Add(LaunchScriptPath);
         if (!string.IsNullOrWhiteSpace(javaHome))
         {
             psi.Environment["JAVA_HOME"] = javaHome;
-            psi.Environment["PATH"] = Path.Combine(javaHome, "bin") + ";" + (psi.Environment.ContainsKey("PATH") ? psi.Environment["PATH"] : string.Empty);
         }
-        Process.Start(psi);
+        else if (psi.Environment.ContainsKey("JAVA_HOME"))
+        {
+            psi.Environment.Remove("JAVA_HOME");
+        }
+
+        if (!string.IsNullOrWhiteSpace(javaBinDir))
+        {
+            psi.Environment["PATH"] = javaBinDir + ";" + (psi.Environment.ContainsKey("PATH") ? psi.Environment["PATH"] : string.Empty);
+        }
+
+        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        process.OutputDataReceived += (_, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data))
+            {
+                Log($"[editor] {e.Data}");
+            }
+        };
+        process.ErrorDataReceived += (_, e) =>
+        {
+            if (!string.IsNullOrWhiteSpace(e.Data))
+            {
+                Log($"[editor] {e.Data}");
+            }
+        };
+
+        if (!process.Start())
+        {
+            throw new InvalidOperationException("Failed to start editor process.");
+        }
+
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+
+        if (process.WaitForExit(2500))
+        {
+            Log($"Editor process exited early with code {process.ExitCode}.");
+            if (process.ExitCode != 0)
+            {
+                throw new InvalidOperationException($"Editor process exited immediately with code {process.ExitCode}. See log: {LogPath}");
+            }
+        }
     }
 
     private async Task<ManifestModel> GetManifestAsync(LauncherConfig config)
@@ -351,6 +419,18 @@ internal sealed class MainForm : Form
         WriteJsonFile(StatePath, _state);
     }
 
+    private void Log(string message)
+    {
+        try
+        {
+            EnsureDirectory(DataDir);
+            File.AppendAllText(LogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}");
+        }
+        catch
+        {
+        }
+    }
+
     private static string? FindBundledJava(string runtimeDir) => Directory.Exists(runtimeDir) ? Directory.EnumerateFiles(runtimeDir, "java.exe", SearchOption.AllDirectories).FirstOrDefault() : null;
     private static string? FindSystemJava() => FindOnPath("java.exe");
 
@@ -397,6 +477,25 @@ internal sealed class MainForm : Form
         }
         catch { }
         return 0;
+    }
+
+    private static string? TryGetJavaHomeFromExe(string javaExe)
+    {
+        try
+        {
+            var javaBinDir = Path.GetDirectoryName(javaExe);
+            if (string.IsNullOrWhiteSpace(javaBinDir)) return null;
+
+            var javaHome = Path.GetDirectoryName(javaBinDir);
+            if (string.IsNullOrWhiteSpace(javaHome)) return null;
+
+            var expectedJavaExe = Path.Combine(javaHome, "bin", "java.exe");
+            return File.Exists(expectedJavaExe) ? javaHome : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string GetSha256(string filePath)
