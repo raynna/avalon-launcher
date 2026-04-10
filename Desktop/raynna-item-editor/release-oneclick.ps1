@@ -126,6 +126,48 @@ function Copy-DirectoryContents([string]$SourceDir, [string]$DestinationDir) {
     }
 }
 
+function Resolve-LauncherOutputDirectory([string]$PreferredDir) {
+    $candidates = @()
+
+    if (-not [string]::IsNullOrWhiteSpace($PreferredDir)) {
+        $candidates += $PreferredDir
+    }
+
+    $preferredParent = Split-Path -Parent $PreferredDir
+    if (-not [string]::IsNullOrWhiteSpace($preferredParent)) {
+        foreach ($name in @('dist-build', 'dist')) {
+            $candidate = Join-Path $preferredParent $name
+            if ($candidates -notcontains $candidate) {
+                $candidates += $candidate
+            }
+        }
+    }
+
+    $resolved = foreach ($candidate in $candidates) {
+        if (-not (Test-Path -LiteralPath $candidate)) {
+            continue
+        }
+
+        $exe = Join-Path $candidate 'ItemEditorLauncher.exe'
+        if (-not (Test-Path -LiteralPath $exe)) {
+            continue
+        }
+
+        [pscustomobject]@{
+            Directory = $candidate
+            ExePath = $exe
+            LastWriteTime = (Get-Item -LiteralPath $exe).LastWriteTime
+        }
+    }
+
+    $selected = $resolved | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($null -eq $selected) {
+        throw "Launcher output not found in any expected directory: $($candidates -join ', ')"
+    }
+
+    return $selected.Directory
+}
+
 Ensure-Path $ConfigPath 'Release config'
 $configRoot = Split-Path -Parent $ConfigPath
 $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
@@ -187,7 +229,9 @@ if ($launcherBuildScriptRelative -and $launcherDistRelative -and $publishLaunche
         throw 'Launcher build failed'
     }
 
+    $launcherDistPath = Resolve-LauncherOutputDirectory $launcherDistPath
     Ensure-Path $launcherDistPath 'Launcher dist'
+    Write-Host "Using launcher output: $launcherDistPath"
 }
 
 $buildOutputPath = Resolve-AgainstRoot $sourceRepo $buildOutputRelative
@@ -206,7 +250,6 @@ Copy-Item -LiteralPath $buildOutputPath -Destination $assetPath -Force
 $zipHash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
 
 if ($launcherBuildScriptRelative -and $launcherDistRelative -and $publishLauncherDirectoryName) {
-    $launcherDistPath = Resolve-AgainstRoot $sourceRepo $launcherDistRelative
     Step 'Publishing launcher files'
     Copy-DirectoryContents -SourceDir $launcherDistPath -DestinationDir $publishLauncherDirectoryPath
 }
