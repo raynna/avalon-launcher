@@ -348,9 +348,10 @@ public class ItemEditorApp {
             ItemPreviewMode previousMode = itemPreviewPanel.mode;
             ItemPreviewMode nextMode = (ItemPreviewMode) itemPreviewModeCombo.getSelectedItem();
             applyPreviewModeDefaults(previousMode, nextMode);
-            RecolorEntry selectedRecolor = itemRecolorList.getSelectedValue();
+            itemRecolorList.clearSelection();
+            selectedHighlightedOriginalColors = new int[0];
+            refreshRecolorList(itemPreviewPanel.item, -1);
             itemPreviewPanel.setMode(nextMode);
-            refreshRecolorList(itemPreviewPanel.item, selectedRecolor == null ? -1 : selectedRecolor.originalColor());
             java.awt.Container parent = itemPreviewPanel.getParent();
             if (parent != null) {
                 parent.revalidate();
@@ -358,7 +359,6 @@ public class ItemEditorApp {
             }
             itemPreviewPanel.revalidate();
             itemPreviewPanel.repaint();
-            itemPreviewPanel.queueRender();
         });
         controlsCard.add(buildPreviewControls(), BorderLayout.CENTER);
         controlsCard.setPreferredSize(new Dimension(520, 260));
@@ -2911,7 +2911,35 @@ public class ItemEditorApp {
             final int renderWearOffsetX = currentWearOffsetXForPreview();
             final int renderWearOffsetY = currentWearOffsetYForPreview();
             final int renderWearOffsetZ = currentWearOffsetZForPreview();
-            PreviewRenderKey nextKey = new PreviewRenderKey(renderItem.id(), renderMode, renderItem.modelId(), renderItem.maleEquip1(), renderItem.maleEquip2(), renderItem.maleEquip3(), renderItem.femaleEquip1(), renderItem.femaleEquip2(), renderItem.femaleEquip3(), renderZoomOverride, renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, animationFrame, renderTargetWidth, renderTargetHeight);
+            final int[] renderOriginalColors = Arrays.copyOf(currentOriginalModelColors, currentOriginalModelColors.length);
+            final int[] renderModifiedColors = Arrays.copyOf(currentModifiedModelColors, currentModifiedModelColors.length);
+            final int[] renderHighlightedOriginalColors = Arrays.copyOf(selectedHighlightedOriginalColors, selectedHighlightedOriginalColors.length);
+            PreviewRenderKey nextKey = new PreviewRenderKey(
+                    renderItem.id(),
+                    renderMode,
+                    renderItem.modelId(),
+                    renderItem.maleEquip1(),
+                    renderItem.maleEquip2(),
+                    renderItem.maleEquip3(),
+                    renderItem.femaleEquip1(),
+                    renderItem.femaleEquip2(),
+                    renderItem.femaleEquip3(),
+                    renderZoomOverride,
+                    renderRotationXOverride,
+                    renderRotationYOverride,
+                    renderRotationZOverride,
+                    renderOffsetXOverride,
+                    renderOffsetYOverride,
+                    renderWearOffsetX,
+                    renderWearOffsetY,
+                    renderWearOffsetZ,
+                    Arrays.hashCode(renderOriginalColors),
+                    Arrays.hashCode(renderModifiedColors),
+                    Arrays.hashCode(renderHighlightedOriginalColors),
+                    animationFrame,
+                    renderTargetWidth,
+                    renderTargetHeight
+            );
             if (nextKey.equals(renderKey) && (renderInProgress || renderedImage != null || renderedFailure != null)) {
                 return;
             }
@@ -2940,11 +2968,11 @@ public class ItemEditorApp {
                         }
                         appendLog("[item " + renderItem.id() + "] preview worker start");
                         BufferedImage image = switch (renderMode) {
-                            case INVENTORY -> renderer.renderInventory(renderItem, currentOriginalModelColors, currentModifiedModelColors, renderTargetWidth, renderTargetHeight, applyPreviewZoomBoost(renderZoomOverride), renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, selectedHighlightedOriginalColors);
-                            case MALE -> renderer.renderWorn(renderItem, currentOriginalModelColors, currentModifiedModelColors, false, renderTargetWidth, renderTargetHeight,
-                                    renderZoomOverride, renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderWearOffsetX, renderWearOffsetY, renderWearOffsetZ, animationFrame, selectedHighlightedOriginalColors);
-                            case FEMALE -> renderer.renderWorn(renderItem, currentOriginalModelColors, currentModifiedModelColors, true, renderTargetWidth, renderTargetHeight,
-                                    renderZoomOverride, renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderWearOffsetX, renderWearOffsetY, renderWearOffsetZ, animationFrame, selectedHighlightedOriginalColors);
+                            case INVENTORY -> renderer.renderInventory(renderItem, renderOriginalColors, renderModifiedColors, renderTargetWidth, renderTargetHeight, applyPreviewZoomBoost(renderZoomOverride), renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderHighlightedOriginalColors);
+                            case MALE -> renderer.renderWorn(renderItem, renderOriginalColors, renderModifiedColors, false, renderTargetWidth, renderTargetHeight,
+                                    renderZoomOverride, renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderWearOffsetX, renderWearOffsetY, renderWearOffsetZ, animationFrame, renderHighlightedOriginalColors);
+                            case FEMALE -> renderer.renderWorn(renderItem, renderOriginalColors, renderModifiedColors, true, renderTargetWidth, renderTargetHeight,
+                                    renderZoomOverride, renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderWearOffsetX, renderWearOffsetY, renderWearOffsetZ, animationFrame, renderHighlightedOriginalColors);
                         };
                         if (image == null) {
                             try {
@@ -2953,11 +2981,11 @@ public class ItemEditorApp {
                                 Thread.currentThread().interrupt();
                             }
                             image = switch (renderMode) {
-                                case INVENTORY -> renderer.renderInventory(renderItem, currentOriginalModelColors, currentModifiedModelColors, renderTargetWidth, renderTargetHeight, applyPreviewZoomBoost(renderZoomOverride), renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, selectedHighlightedOriginalColors);
-                                case MALE -> renderer.renderWorn(renderItem, currentOriginalModelColors, currentModifiedModelColors, false, renderTargetWidth, renderTargetHeight,
-                                        renderZoomOverride, renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderWearOffsetX, renderWearOffsetY, renderWearOffsetZ, animationFrame, selectedHighlightedOriginalColors);
-                                case FEMALE -> renderer.renderWorn(renderItem, currentOriginalModelColors, currentModifiedModelColors, true, renderTargetWidth, renderTargetHeight,
-                                        renderZoomOverride, renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderWearOffsetX, renderWearOffsetY, renderWearOffsetZ, animationFrame, selectedHighlightedOriginalColors);
+                                case INVENTORY -> renderer.renderInventory(renderItem, renderOriginalColors, renderModifiedColors, renderTargetWidth, renderTargetHeight, applyPreviewZoomBoost(renderZoomOverride), renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderHighlightedOriginalColors);
+                                case MALE -> renderer.renderWorn(renderItem, renderOriginalColors, renderModifiedColors, false, renderTargetWidth, renderTargetHeight,
+                                        renderZoomOverride, renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderWearOffsetX, renderWearOffsetY, renderWearOffsetZ, animationFrame, renderHighlightedOriginalColors);
+                                case FEMALE -> renderer.renderWorn(renderItem, renderOriginalColors, renderModifiedColors, true, renderTargetWidth, renderTargetHeight,
+                                        renderZoomOverride, renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderWearOffsetX, renderWearOffsetY, renderWearOffsetZ, animationFrame, renderHighlightedOriginalColors);
                             };
                         }
                         int activeModelId = switch (renderMode) {
@@ -3396,7 +3424,7 @@ public class ItemEditorApp {
             return (int) Math.round(zoom * PREVIEW_ZOOM_MULTIPLIER);
         }
 
-        private record PreviewRenderKey(int itemId, ItemPreviewMode mode, int inventoryModelId, int maleModelId1, int maleModelId2, int maleModelId3, int femaleModelId1, int femaleModelId2, int femaleModelId3, int zoom, int rotationX, int rotationY, int rotationZ, int offsetX, int offsetY, int animationFrame, int width, int height) {
+        private record PreviewRenderKey(int itemId, ItemPreviewMode mode, int inventoryModelId, int maleModelId1, int maleModelId2, int maleModelId3, int femaleModelId1, int femaleModelId2, int femaleModelId3, int zoom, int rotationX, int rotationY, int rotationZ, int offsetX, int offsetY, int wearOffsetX, int wearOffsetY, int wearOffsetZ, int originalColorsHash, int modifiedColorsHash, int highlightedColorsHash, int animationFrame, int width, int height) {
         }
 
         private record PreviewRenderResult(BufferedImage image, String failure) {
