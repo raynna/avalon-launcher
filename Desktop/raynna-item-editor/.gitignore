@@ -9,3 +9,4 @@ launcher/dist-build/
 launcher/dist-build-*/
 launcher/ItemEditorLauncherExe/bin/
 launcher/ItemEditorLauncherExe/obj/
+.github-token

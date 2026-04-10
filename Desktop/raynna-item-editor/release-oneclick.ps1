@@ -168,6 +168,65 @@ function Resolve-LauncherOutputDirectory([string]$PreferredDir) {
     return $selected.Directory
 }
 
+function Get-OptionalEnvValue([string]$Name) {
+    $value = [Environment]::GetEnvironmentVariable($Name)
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return $null
+    }
+    return $value
+}
+
+function Get-GitHubHeaders([string]$Token) {
+    return @{
+        Authorization = "Bearer $Token"
+        Accept = "application/vnd.github+json"
+        'User-Agent' = 'raynna-item-editor-release-script'
+        'X-GitHub-Api-Version' = '2022-11-28'
+    }
+}
+
+function Publish-GitHubReleaseAsset(
+    [string]$Repository,
+    [string]$Tag,
+    [string]$AssetPath,
+    [string]$AssetName,
+    [string]$Token
+) {
+    $headers = Get-GitHubHeaders $Token
+    $releaseApi = "https://api.github.com/repos/$Repository/releases/tags/$Tag"
+
+    try {
+        $release = Invoke-RestMethod -Method Get -Uri $releaseApi -Headers $headers
+    }
+    catch {
+        if ($_.Exception.Response.StatusCode.value__ -ne 404) {
+            throw
+        }
+
+        $createBody = @{
+            tag_name = $Tag
+            name = $Tag
+            draft = $false
+            prerelease = $false
+        } | ConvertTo-Json
+
+        $release = Invoke-RestMethod -Method Post -Uri "https://api.github.com/repos/$Repository/releases" -Headers $headers -ContentType 'application/json' -Body $createBody
+    }
+
+    $existingAsset = @($release.assets) | Where-Object { $_.name -eq $AssetName } | Select-Object -First 1
+    if ($null -ne $existingAsset) {
+        Invoke-RestMethod -Method Delete -Uri "https://api.github.com/repos/$Repository/releases/assets/$($existingAsset.id)" -Headers $headers | Out-Null
+    }
+
+    $uploadUrl = ($release.upload_url -replace '\{\?name,label\}$', '') + "?name=$([Uri]::EscapeDataString($AssetName))"
+    Invoke-RestMethod -Method Post -Uri $uploadUrl -Headers @{
+        Authorization = "Bearer $Token"
+        Accept = "application/vnd.github+json"
+        'User-Agent' = 'raynna-item-editor-release-script'
+        'X-GitHub-Api-Version' = '2022-11-28'
+    } -ContentType 'application/octet-stream' -InFile $AssetPath | Out-Null
+}
+
 Ensure-Path $ConfigPath 'Release config'
 $configRoot = Split-Path -Parent $ConfigPath
 $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
@@ -185,6 +244,10 @@ $gradleTask = Get-ConfigValue $config 'gradleTask'
 $buildOutputRelative = Get-ConfigValue $config 'buildOutput'
 $launcherBuildScriptRelative = Get-OptionalConfigValue $config 'launcherBuildScript'
 $launcherDistRelative = Get-OptionalConfigValue $config 'launcherDist'
+$launcherReleaseRepository = Get-OptionalConfigValue $config 'launcherReleaseRepository'
+$launcherReleaseTag = Get-OptionalConfigValue $config 'launcherReleaseTag'
+$launcherReleaseAssetName = Get-OptionalConfigValue $config 'launcherReleaseAssetName'
+$githubToken = Get-OptionalEnvValue 'GITHUB_TOKEN'
 
 Ensure-Path $sourceRepo 'Source repo'
 Ensure-Path $publishRepo 'Publish repo'
@@ -252,6 +315,23 @@ $zipHash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLower
 if ($launcherBuildScriptRelative -and $launcherDistRelative -and $publishLauncherDirectoryName) {
     Step 'Publishing launcher files'
     Copy-DirectoryContents -SourceDir $launcherDistPath -DestinationDir $publishLauncherDirectoryPath
+
+    if ($launcherReleaseRepository -and $launcherReleaseTag -and $launcherReleaseAssetName) {
+        if ([string]::IsNullOrWhiteSpace($githubToken)) {
+            Write-Host 'Skipping GitHub Release upload for launcher: GITHUB_TOKEN is not set.' -ForegroundColor Yellow
+        }
+        else {
+            $launcherExePath = Join-Path $launcherDistPath 'ItemEditorLauncher.exe'
+            Ensure-Path $launcherExePath 'Launcher executable'
+            Step "Uploading launcher to GitHub Release tag '$launcherReleaseTag'"
+            Publish-GitHubReleaseAsset `
+                -Repository $launcherReleaseRepository `
+                -Tag $launcherReleaseTag `
+                -AssetPath $launcherExePath `
+                -AssetName $launcherReleaseAssetName `
+                -Token $githubToken
+        }
+    }
 }
 
 Step 'Updating manifest.json'

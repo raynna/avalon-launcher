@@ -11,5 +11,8 @@
   "gradleTask": "clean packageWindowsZip",
   "buildOutput": "build/distributions/raynna-item-editor-windows.zip",
   "launcherBuildScript": "launcher/build-exe.ps1",
-  "launcherDist": "launcher/dist"
+  "launcherDist": "launcher/dist",
+  "launcherReleaseRepository": "raynna/raynna-item-editor-release",
+  "launcherReleaseTag": "launcher",
+  "launcherReleaseAssetName": "ItemEditorLauncher.exe"
 }
