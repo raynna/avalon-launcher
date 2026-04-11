@@ -23,7 +23,9 @@ dependencies {
         "C:/Users/andre/Desktop/cs2-editor/build/resources/main",
         "C:/Users/andre/Desktop/cs2-editor-1.5/build/classes/java/main",
         "C:/Users/andre/Desktop/cs2-editor-1.5/build/classes/kotlin/main",
-        "C:/Users/andre/Desktop/cs2-editor-1.5/build/resources/main"
+        "C:/Users/andre/Desktop/cs2-editor-1.5/build/resources/main",
+        "C:/Users/andre/Desktop/Avalon-osrs/build/classes/java/main",
+        "C:/Users/andre/Desktop/Avalon-osrs/build/resources/main"
     ))
 }
 

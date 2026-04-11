@@ -17,12 +17,11 @@ public final class MainFile {
 	private static final int BLOCK_LEN = 512;
 	private static final int EXPANDED_BLOCK_LEN = 510;
 	private static final int TOTAL_BLOCK_LEN = HEADER_LEN + BLOCK_LEN;
-	private static final ByteBuffer tempBuffer = ByteBuffer.allocateDirect(TOTAL_BLOCK_LEN);
-
 	private int id;
 	private FileChannel index;
 	private FileChannel data;
 	private boolean newProtocol;
+	private final ByteBuffer tempBuffer = ByteBuffer.allocateDirect(TOTAL_BLOCK_LEN);
 
 	protected MainFile(int id, RandomAccessFile data, RandomAccessFile index, boolean newProtocol) throws IOException {
 		this.id = id;
@@ -47,7 +46,9 @@ public final class MainFile {
 		synchronized (data) {
 			try {
 				tempBuffer.position(0).limit(IDX_BLOCK_LEN);
-				index.read(tempBuffer, (long) archiveId * (long) IDX_BLOCK_LEN);
+				if (!readFully(index, tempBuffer, (long) archiveId * (long) IDX_BLOCK_LEN)) {
+					return null;
+				}
 				tempBuffer.flip();
 				int size = getMediumInt(tempBuffer);
 				int block = getMediumInt(tempBuffer);
@@ -69,7 +70,9 @@ public final class MainFile {
 					}
 					int blockSize = remaining > blockLen ? blockLen : remaining;
 					tempBuffer.position(0).limit(blockSize + headerLen);
-					data.read(tempBuffer, (long) block * (long) TOTAL_BLOCK_LEN);
+					if (!readFully(data, tempBuffer, (long) block * (long) TOTAL_BLOCK_LEN)) {
+						return null;
+					}
 					tempBuffer.flip();
 
 					int currentFile, currentChunk, nextBlock, currentIndex;
@@ -138,7 +141,9 @@ public final class MainFile {
 					}
 
 					tempBuffer.position(0).limit(IDX_BLOCK_LEN);
-					index.read(tempBuffer, archiveId * IDX_BLOCK_LEN);
+					if (!readFully(index, tempBuffer, (long) archiveId * (long) IDX_BLOCK_LEN)) {
+						return false;
+					}
 					tempBuffer.flip().position(3);
 					block = getMediumInt(tempBuffer);
 
@@ -156,7 +161,7 @@ public final class MainFile {
 				putMediumInt(tempBuffer, size);
 				putMediumInt(tempBuffer, block);
 				tempBuffer.flip();
-				index.write(tempBuffer, archiveId * IDX_BLOCK_LEN);
+				writeFully(index, tempBuffer, (long) archiveId * (long) IDX_BLOCK_LEN);
 
 				int remaining = size;
 				int chunk = 0;
@@ -166,7 +171,9 @@ public final class MainFile {
 					int nextBlock = 0;
 					if (exists) {
 						tempBuffer.position(0).limit(headerLen);
-						data.read(tempBuffer, block * TOTAL_BLOCK_LEN);
+						if (!readFully(data, tempBuffer, (long) block * (long) TOTAL_BLOCK_LEN)) {
+							return false;
+						}
 						tempBuffer.flip();
 
 						int currentFile, currentChunk, currentIndex;
@@ -222,7 +229,7 @@ public final class MainFile {
 					tempBuffer.put(archive);
 					tempBuffer.flip();
 
-					data.write(tempBuffer, block * TOTAL_BLOCK_LEN);
+					writeFully(data, tempBuffer, (long) block * (long) TOTAL_BLOCK_LEN);
 					remaining -= blockSize;
 					block = nextBlock;
 					chunk++;
@@ -242,6 +249,23 @@ public final class MainFile {
 	public int getArchivesCount() throws IOException {
 		synchronized (index) {
 			return (int) (index.size() / 6);
+		}
+	}
+
+	private static boolean readFully(FileChannel channel, ByteBuffer buffer, long position) throws IOException {
+		while (buffer.hasRemaining()) {
+			int read = channel.read(buffer, position);
+			if (read < 0) {
+				return false;
+			}
+			position += read;
+		}
+		return true;
+	}
+
+	private static void writeFully(FileChannel channel, ByteBuffer buffer, long position) throws IOException {
+		while (buffer.hasRemaining()) {
+			position += channel.write(buffer, position);
 		}
 	}
 }

@@ -220,14 +220,28 @@ internal sealed class MainForm : Form
             Log($"Editor package extracted to {tempExtract}");
             TryDeleteFile(tempZip);
 
-            if (Directory.Exists(PackageDir))
+            try
             {
-                Directory.Move(PackageDir, backupDir);
+                if (Directory.Exists(PackageDir))
+                {
+                    TryDeleteDirectory(backupDir);
+                    MoveDirectoryWithRetry(PackageDir, backupDir);
+                }
+
+                MoveDirectoryWithRetry(tempExtract, PackageDir);
+
+                if (Directory.Exists(backupDir))
+                {
+                    TryDeleteDirectory(backupDir);
+                }
             }
-            Directory.Move(tempExtract, PackageDir);
-            if (Directory.Exists(backupDir))
+            catch (UnauthorizedAccessException ex)
             {
-                Directory.Delete(backupDir, true);
+                throw new InvalidOperationException("Editor files are in use. Close any running Item Editor windows and retry.", ex);
+            }
+            catch (IOException ex)
+            {
+                throw new InvalidOperationException("Editor files are in use. Close any running Item Editor windows and retry.", ex);
             }
         }
         else
@@ -511,6 +525,45 @@ internal sealed class MainForm : Form
             if (File.Exists(path)) File.Delete(path);
         }
         catch { }
+    }
+
+    private static void TryDeleteDirectory(string path)
+    {
+        try
+        {
+            if (Directory.Exists(path)) Directory.Delete(path, true);
+        }
+        catch { }
+    }
+
+    private static void MoveDirectoryWithRetry(string source, string destination, int attempts = 8, int delayMs = 250)
+    {
+        Exception? lastError = null;
+        for (var i = 0; i < attempts; i++)
+        {
+            try
+            {
+                if (Directory.Exists(destination))
+                {
+                    Directory.Delete(destination, true);
+                }
+
+                Directory.Move(source, destination);
+                return;
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                lastError = ex;
+            }
+            catch (IOException ex)
+            {
+                lastError = ex;
+            }
+
+            Thread.Sleep(delayMs);
+        }
+
+        throw lastError ?? new IOException($"Failed to move directory '{source}' to '{destination}'.");
     }
 
     private static bool IsHttpUrl(string value) => value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) || value.StartsWith("https://", StringComparison.OrdinalIgnoreCase);

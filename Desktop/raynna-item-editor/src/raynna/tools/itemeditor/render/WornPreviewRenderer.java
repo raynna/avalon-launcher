@@ -36,28 +36,23 @@ final class WornPreviewRenderer {
             }
             RsModelData assembled = RsModelData.combine(parts);
             if (assembled == null) {
-                System.out.println("[worn item " + item.id() + "] assembled=null female=" + female + " primary=" + primaryModelId
-                        + " equipSlot=" + built.equipSlot() + " parts=" + nonNullParts);
                 return null;
             }
-            System.out.println("[worn item " + item.id() + "] assembled ok female=" + female + " primary=" + primaryModelId
-                    + " equipSlot=" + built.equipSlot() + " parts=" + nonNullParts);
             return rasterizer.render(item, assembled, primaryModelId, width, height,
                     buildCamera(item, bas, zoom, rotationX, rotationY, rotationZ, cameraOffsetX, cameraOffsetY, built.equipSlot(), animationFrame),
                     originalColors, modifiedColors, highlightedOriginalColors);
         } catch (RuntimeException exception) {
+            if ("preview render cancelled".equals(exception.getMessage())) {
+                throw exception;
+            }
             System.out.println("[worn item " + item.id() + "] fallback female=" + female + " primary=" + primaryModelId
                     + " equipSlot=" + built.equipSlot() + " reason=" + exception.getClass().getSimpleName()
                     + (exception.getMessage() == null ? "" : ": " + exception.getMessage()));
         }
         RsModelData primary = appearanceBuilder.build(item, female, originalColors, modifiedColors, wearOffsetX, wearOffsetY, wearOffsetZ).parts()[mapPrimaryFallbackSlot(item.equipSlot())];
         if (primary == null) {
-            System.out.println("[worn item " + item.id() + "] fallback primary=null female=" + female + " primary=" + primaryModelId
-                    + " equipSlot=" + item.equipSlot());
             return null;
         }
-        System.out.println("[worn item " + item.id() + "] fallback primary-only female=" + female + " primary=" + primaryModelId
-                + " equipSlot=" + item.equipSlot());
         return rasterizer.render(item, primary, primaryModelId, width, height,
                 buildCamera(item, null, zoom, rotationX, rotationY, rotationZ, cameraOffsetX, cameraOffsetY, item.equipSlot(), animationFrame),
                 originalColors, modifiedColors, highlightedOriginalColors);

@@ -3,6 +3,7 @@ package raynna.tools.itemeditor.render;
 final class RsModelData {
     private static final int MAX_VERTEX_COUNT = 20000;
     private static final int MAX_FACE_COUNT = 30000;
+
     private final int[] verticesX;
     private final int[] verticesY;
     private final int[] verticesZ;
@@ -10,8 +11,48 @@ final class RsModelData {
     private final short[] faceB;
     private final short[] faceC;
     private final short[] faceColors;
+    private final short[] faceTextures;
+    private final byte[] faceTextureCoords;
+    private final byte[] textureRenderTypes;
+    private final short[] textureTriangleA;
+    private final short[] textureTriangleB;
+    private final short[] textureTriangleC;
+    private final int[] textureScaleX;
+    private final int[] textureScaleY;
+    private final int[] textureScaleZ;
+    private final byte[] textureDirection;
+    private final byte[] textureSpeed;
+    private final int[] textureTranslation;
+    private final int[] textureUTrans;
+    private final int[] textureVTrans;
+    private final byte[] rawData;
+    private final int faceTextureOffset;
 
-    private RsModelData(int[] verticesX, int[] verticesY, int[] verticesZ, short[] faceA, short[] faceB, short[] faceC, short[] faceColors) {
+    private RsModelData(
+            int[] verticesX,
+            int[] verticesY,
+            int[] verticesZ,
+            short[] faceA,
+            short[] faceB,
+            short[] faceC,
+            short[] faceColors,
+            short[] faceTextures,
+            byte[] faceTextureCoords,
+            byte[] textureRenderTypes,
+            short[] textureTriangleA,
+            short[] textureTriangleB,
+            short[] textureTriangleC,
+            int[] textureScaleX,
+            int[] textureScaleY,
+            int[] textureScaleZ,
+            byte[] textureDirection,
+            byte[] textureSpeed,
+            int[] textureTranslation,
+            int[] textureUTrans,
+            int[] textureVTrans,
+            byte[] rawData,
+            int faceTextureOffset
+    ) {
         this.verticesX = verticesX;
         this.verticesY = verticesY;
         this.verticesZ = verticesZ;
@@ -19,6 +60,22 @@ final class RsModelData {
         this.faceB = faceB;
         this.faceC = faceC;
         this.faceColors = faceColors;
+        this.faceTextures = faceTextures;
+        this.faceTextureCoords = faceTextureCoords;
+        this.textureRenderTypes = textureRenderTypes;
+        this.textureTriangleA = textureTriangleA;
+        this.textureTriangleB = textureTriangleB;
+        this.textureTriangleC = textureTriangleC;
+        this.textureScaleX = textureScaleX;
+        this.textureScaleY = textureScaleY;
+        this.textureScaleZ = textureScaleZ;
+        this.textureDirection = textureDirection;
+        this.textureSpeed = textureSpeed;
+        this.textureTranslation = textureTranslation;
+        this.textureUTrans = textureUTrans;
+        this.textureVTrans = textureVTrans;
+        this.rawData = rawData;
+        this.faceTextureOffset = faceTextureOffset;
     }
 
     static RsModelData decode(byte[] data) {
@@ -78,30 +135,27 @@ final class RsModelData {
         int off = texTriCount;
         int vertexFlagsOff = off;
         off += vertexCount;
-        int faceTypesOff = off;
         if (hasFaceTypes == 1) {
             off += faceCount;
         }
         int faceCompressOff = off;
         off += faceCount;
-        int facePriOff = off;
         if (faceRenderPri == 255) {
             off += faceCount;
         }
-        int faceSkinOff = off;
         if (hasFaceSkins == 1) {
             off += faceCount;
         }
         int vertSkinOff = off;
         off += vSkinLen;
-        int faceAlphaOff = off;
         if (hasFaceAlphas == 1) {
             off += faceCount;
         }
         int faceIdxOff = off;
         off += faceIdxLen;
-        int faceTexMapOff = off;
+        int faceTextureOff = -1;
         if (hasFaceTextures == 1) {
+            faceTextureOff = off;
             off += faceCount * 2;
         }
         int texIdxOff = off;
@@ -114,6 +168,7 @@ final class RsModelData {
         off += yDataLen;
         int zOff = off;
         off += zDataLen;
+        int simpleTexOff = off;
         off += simpleTexCount * 6;
         off += complexTexCount * 6;
         off += complexTexCount * 6;
@@ -121,7 +176,11 @@ final class RsModelData {
         off += complexTexCount;
         off += complexTexCount * 2 + complexType2Count * 2;
 
-        return decodeCommon(data, vertexCount, faceCount, vertexFlagsOff, xOff, yOff, zOff, vertSkinOff, hasVertexSkins, hasAnimaya, faceColorOff, faceIdxOff, faceCompressOff);
+        short[] faceTextures = readFaceTextures(data, faceTextureOff, faceCount);
+        byte[] faceTextureCoords = readFaceTextureCoords(data, texIdxOff, faceCount, faceTextures);
+        TextureMapping mapping = readTextureMapping(data, texTriCount, simpleTexOff, 0, simpleTexCount, complexTexCount, complexType2Count, true);
+        return decodeCommon(data, vertexCount, faceCount, vertexFlagsOff, xOff, yOff, zOff, vertSkinOff, hasVertexSkins, hasAnimaya,
+                faceColorOff, faceIdxOff, faceCompressOff, faceTextures, faceTextureCoords, mapping, faceTextureOff);
     }
 
     private static RsModelData decodeType2(byte[] data) {
@@ -148,21 +207,17 @@ final class RsModelData {
         off += vertexCount;
         int faceCompressOff = off;
         off += faceCount;
-        int facePriOff = off;
         if (faceRenderPri == 255) {
             off += faceCount;
         }
-        int faceSkinOff = off;
         if (hasFaceSkins == 1) {
             off += faceCount;
         }
-        int faceTypeOff = off;
         if (hasFaceTypes == 1) {
             off += faceCount;
         }
         int vertSkinOff = off;
         off += vSkinLen;
-        int faceAlphaOff = off;
         if (hasFaceAlphas == 1) {
             off += faceCount;
         }
@@ -170,6 +225,7 @@ final class RsModelData {
         off += faceIdxLen;
         int faceColorOff = off;
         off += faceCount * 2;
+        int simpleTexOff = off;
         off += texTriCount * 6;
         int xOff = off;
         off += xDataLen;
@@ -177,7 +233,9 @@ final class RsModelData {
         off += yDataLen;
         int zOff = off;
 
-        return decodeCommon(data, vertexCount, faceCount, vertexFlagsOff, xOff, yOff, zOff, vertSkinOff, hasVertexSkins, hasAnimaya, faceColorOff, faceIdxOff, faceCompressOff);
+        TextureMapping mapping = readTextureMapping(data, texTriCount, simpleTexOff, 0, texTriCount, 0, 0, null);
+        return decodeCommon(data, vertexCount, faceCount, vertexFlagsOff, xOff, yOff, zOff, vertSkinOff, hasVertexSkins, hasAnimaya,
+                faceColorOff, faceIdxOff, faceCompressOff, null, null, mapping, -1);
     }
 
     private static RsModelData decodeFormat1(byte[] data) {
@@ -189,8 +247,6 @@ final class RsModelData {
         int texTriCount = footer.readUnsignedByte();
         int flags = footer.readUnsignedByte();
         boolean hasFaceTypes = (flags & 0x1) == 1;
-        boolean hasFaceLabels = (flags & 0x2) == 2;
-        boolean hasParticleEffects = (flags & 0x4) == 4;
         boolean extended = (flags & 0x8) == 8;
         int version = 12;
         if (extended) {
@@ -231,17 +287,14 @@ final class RsModelData {
         int off = texTriCount;
         int vertexFlagsOff = off;
         off += vertexCount;
-        int faceTypeOff = off;
         if (hasFaceTypes) {
             off += faceCount;
         }
         int faceCompressOff = off;
         off += faceCount;
-        int facePriOff = off;
         if (faceRenderPri == 255) {
             off += faceCount;
         }
-        int faceSkinOff = off;
         if (hasFaceSkins == 1) {
             off += faceCount;
         }
@@ -249,17 +302,17 @@ final class RsModelData {
         if (hasVertexSkins == 1) {
             off += vertexCount;
         }
-        int faceAlphaOff = off;
         if (hasFaceAlphas == 1) {
             off += faceCount;
         }
         int faceIdxOff = off;
         off += faceIdxLen;
-        int faceTextureOff = off;
+        int faceTextureOff = -1;
         if (hasFaceTextures == 1) {
+            faceTextureOff = off;
             off += faceCount * 2;
         }
-        int textureCoordOff = off;
+        int texIdxOff = off;
         off += texDataLen;
         int faceColorOff = off;
         off += faceCount * 2;
@@ -269,31 +322,19 @@ final class RsModelData {
         off += yDataLen;
         int zOff = off;
         off += zDataLen;
-        int simpleTextureOff = off;
+        int simpleTexOff = off;
         off += simpleTexCount * 6;
-        int complexTextureOff = off;
         off += complexTexCount * 6;
-        int complexTextureScaleOff = off;
-        if (version < 15) {
-            off += complexTexCount * 6;
-        } else {
-            off += complexTexCount * 9;
-        }
-        int complexTextureRotationOff = off;
+        off += version < 15 ? complexTexCount * 6 : complexTexCount * 9;
         off += complexTexCount;
-        int complexTextureDirectionOff = off;
         off += complexTexCount;
-        int complexTextureTranslationOff = off;
         off += complexTexCount + complexType2Count * 2;
-        validateOffset(faceTextureOff, data.length, "faceTextureOff");
-        validateOffset(textureCoordOff, data.length, "textureCoordOff");
-        validateOffset(simpleTextureOff, data.length, "simpleTextureOff");
-        validateOffset(complexTextureOff, data.length, "complexTextureOff");
-        validateOffset(complexTextureScaleOff, data.length, "complexTextureScaleOff");
-        validateOffset(complexTextureRotationOff, data.length, "complexTextureRotationOff");
-        validateOffset(complexTextureDirectionOff, data.length, "complexTextureDirectionOff");
-        validateOffset(complexTextureTranslationOff, data.length, "complexTextureTranslationOff");
-        return decodeCommon(data, vertexCount, faceCount, vertexFlagsOff, xOff, yOff, zOff, vertSkinOff, hasVertexSkins, 0, faceColorOff, faceIdxOff, faceCompressOff);
+
+        short[] faceTextures = readFaceTextures(data, faceTextureOff, faceCount);
+        byte[] faceTextureCoords = readFaceTextureCoords(data, texIdxOff, faceCount, faceTextures);
+        TextureMapping mapping = readTextureMapping(data, texTriCount, simpleTexOff, version, simpleTexCount, complexTexCount, complexType2Count, true);
+        return decodeCommon(data, vertexCount, faceCount, vertexFlagsOff, xOff, yOff, zOff, vertSkinOff, hasVertexSkins, 0,
+                faceColorOff, faceIdxOff, faceCompressOff, faceTextures, faceTextureCoords, mapping, faceTextureOff);
     }
 
     private static RsModelData decodeLegacy(byte[] data) {
@@ -318,15 +359,12 @@ final class RsModelData {
         off += vertexCount;
         int faceCompressOff = off;
         off += faceCount;
-        int facePriOff = off;
         if (faceRenderPri == 255) {
             off += faceCount;
         }
-        int faceSkinOff = off;
         if (hasFaceSkins == 1) {
             off += faceCount;
         }
-        int faceTypeOff = off;
         if (hasFaceTypes == 1) {
             off += faceCount;
         }
@@ -334,7 +372,6 @@ final class RsModelData {
         if (hasVertexSkins == 1) {
             off += vertexCount;
         }
-        int faceAlphaOff = off;
         if (hasFaceAlphas == 1) {
             off += faceCount;
         }
@@ -342,6 +379,7 @@ final class RsModelData {
         off += faceIdxLen;
         int faceColorOff = off;
         off += faceCount * 2;
+        int simpleTexOff = off;
         off += texTriCount * 6;
         int xOff = off;
         off += xDataLen;
@@ -349,10 +387,30 @@ final class RsModelData {
         off += yDataLen;
         int zOff = off;
 
-        return decodeCommon(data, vertexCount, faceCount, vertexFlagsOff, xOff, yOff, zOff, vertSkinOff, hasVertexSkins, 0, faceColorOff, faceIdxOff, faceCompressOff);
+        TextureMapping mapping = readTextureMapping(data, texTriCount, simpleTexOff, 0, texTriCount, 0, 0, null);
+        return decodeCommon(data, vertexCount, faceCount, vertexFlagsOff, xOff, yOff, zOff, vertSkinOff, hasVertexSkins, 0,
+                faceColorOff, faceIdxOff, faceCompressOff, null, null, mapping, -1);
     }
 
-    private static RsModelData decodeCommon(byte[] data, int vertexCount, int faceCount, int vertexFlagsOff, int xOff, int yOff, int zOff, int vertSkinOff, int hasVertexSkins, int hasAnimaya, int faceColorOff, int faceIdxOff, int faceCompressOff) {
+    private static RsModelData decodeCommon(
+            byte[] data,
+            int vertexCount,
+            int faceCount,
+            int vertexFlagsOff,
+            int xOff,
+            int yOff,
+            int zOff,
+            int vertSkinOff,
+            int hasVertexSkins,
+            int hasAnimaya,
+            int faceColorOff,
+            int faceIdxOff,
+            int faceCompressOff,
+            short[] faceTextures,
+            byte[] faceTextureCoords,
+            TextureMapping textureMapping,
+            int faceTextureOffset
+    ) {
         validateOffset(vertexFlagsOff, data.length, "vertexFlagsOff");
         validateOffset(xOff, data.length, "xOff");
         validateOffset(yOff, data.length, "yOff");
@@ -413,7 +471,152 @@ final class RsModelData {
         faceIdx.position(faceIdxOff);
         faceCompress.position(faceCompressOff);
         readFaceIndices(faceIdx, faceCompress, faceA, faceB, faceC);
-        return new RsModelData(verticesX, verticesY, verticesZ, faceA, faceB, faceC, faceColors);
+        return new RsModelData(
+                verticesX,
+                verticesY,
+                verticesZ,
+                faceA,
+                faceB,
+                faceC,
+                faceColors,
+                faceTextures,
+                faceTextureCoords,
+                textureMapping.types,
+                textureMapping.triangleA,
+                textureMapping.triangleB,
+                textureMapping.triangleC,
+                textureMapping.scaleX,
+                textureMapping.scaleY,
+                textureMapping.scaleZ,
+                textureMapping.direction,
+                textureMapping.speed,
+                textureMapping.translation,
+                textureMapping.uTrans,
+                textureMapping.vTrans,
+                data.clone(),
+                faceTextureOffset
+        );
+    }
+
+    private static short[] readFaceTextures(byte[] data, int offset, int faceCount) {
+        if (offset < 0) {
+            return null;
+        }
+        validateOffset(offset, data.length, "faceTextureOff");
+        ModelDataBuffer buffer = new ModelDataBuffer(data);
+        buffer.position(offset);
+        short[] faceTextures = new short[faceCount];
+        for (int i = 0; i < faceCount; i++) {
+            int value = buffer.readUnsignedShort();
+            faceTextures[i] = (short) (value == 65535 ? -1 : value);
+        }
+        return faceTextures;
+    }
+
+    private static byte[] readFaceTextureCoords(byte[] data, int offset, int faceCount, short[] faceTextures) {
+        if (offset < 0 || faceTextures == null) {
+            return null;
+        }
+        validateOffset(offset, data.length, "texIdxOff");
+        ModelDataBuffer buffer = new ModelDataBuffer(data);
+        buffer.position(offset);
+        byte[] coords = new byte[faceCount];
+        boolean any = false;
+        for (int i = 0; i < faceCount; i++) {
+            if (faceTextures[i] != -1) {
+                coords[i] = (byte) (buffer.readUnsignedByte() - 1);
+                any |= coords[i] >= 0;
+            } else {
+                coords[i] = -1;
+            }
+        }
+        return any ? coords : null;
+    }
+
+    private static TextureMapping readTextureMapping(byte[] data, int texTriCount, Integer simpleTexOff, Integer version,
+                                                     Integer simpleTexCount, Integer complexTexCount, Integer complexType2Count,
+                                                     Boolean hasComplexLayout) {
+        if (texTriCount <= 0 || simpleTexOff == null || simpleTexOff < 0) {
+            return TextureMapping.empty();
+        }
+        byte[] types = new byte[texTriCount];
+        if (hasComplexLayout != null) {
+            ModelDataBuffer typeBuffer = new ModelDataBuffer(data);
+            typeBuffer.position(0);
+            for (int i = 0; i < texTriCount; i++) {
+                types[i] = typeBuffer.readByte();
+            }
+        } else {
+            java.util.Arrays.fill(types, (byte) 0);
+        }
+
+        short[] triangleA = new short[texTriCount];
+        short[] triangleB = new short[texTriCount];
+        short[] triangleC = new short[texTriCount];
+        int[] scaleX = new int[texTriCount];
+        int[] scaleY = new int[texTriCount];
+        int[] scaleZ = new int[texTriCount];
+        byte[] direction = new byte[texTriCount];
+        byte[] speed = new byte[texTriCount];
+        int[] translation = new int[texTriCount];
+        int[] uTrans = new int[texTriCount];
+        int[] vTrans = new int[texTriCount];
+        ModelDataBuffer simple = new ModelDataBuffer(data);
+        simple.position(simpleTexOff);
+
+        ModelDataBuffer complex = null;
+        ModelDataBuffer complexData = null;
+        ModelDataBuffer complexScale = null;
+        ModelDataBuffer complexRot = null;
+        ModelDataBuffer complexMore = null;
+
+        if (Boolean.TRUE.equals(hasComplexLayout) && simpleTexCount != null && complexTexCount != null && complexType2Count != null && version != null) {
+            int complexTexOff = simpleTexOff + simpleTexCount * 6;
+            int complexTexDataOff = complexTexOff + complexTexCount * 6;
+            int complexTexScaleOff = complexTexDataOff + complexTexCount * (version < 15 ? 6 : 9);
+            int complexTexRotOff = complexTexScaleOff + complexTexCount * 2;
+            int complexTexMoreOff = complexTexRotOff + complexTexCount;
+            complex = new ModelDataBuffer(data);
+            complexData = new ModelDataBuffer(data);
+            complexScale = new ModelDataBuffer(data);
+            complexRot = new ModelDataBuffer(data);
+            complexMore = new ModelDataBuffer(data);
+            complex.position(complexTexOff);
+            complexData.position(complexTexDataOff);
+            complexScale.position(complexTexScaleOff);
+            complexRot.position(complexTexRotOff);
+            complexMore.position(complexTexMoreOff);
+        }
+
+        for (int i = 0; i < texTriCount; i++) {
+            int type = types[i] & 0xFF;
+            ModelDataBuffer source = type == 0 ? simple : complex;
+            if (source == null) {
+                continue;
+            }
+            triangleA[i] = (short) source.readUnsignedShort();
+            triangleB[i] = (short) source.readUnsignedShort();
+            triangleC[i] = (short) source.readUnsignedShort();
+            if (type >= 1 && complexData != null) {
+                if (version < 15) {
+                    scaleX[i] = complexData.readUnsignedShort();
+                    scaleY[i] = version < 14 ? complexData.readUnsignedShort() : complexData.read24BitUnsignedInteger();
+                    scaleZ[i] = complexData.readUnsignedShort();
+                } else {
+                    scaleX[i] = complexData.read24BitUnsignedInteger();
+                    scaleY[i] = complexData.read24BitUnsignedInteger();
+                    scaleZ[i] = complexData.read24BitUnsignedInteger();
+                }
+                direction[i] = complexScale.readByte();
+                speed[i] = complexRot.readByte();
+                translation[i] = complexMore.readByte();
+                if (type == 2) {
+                    uTrans[i] = complexMore.readByte();
+                    vTrans[i] = complexMore.readByte();
+                }
+            }
+        }
+        return new TextureMapping(types, triangleA, triangleB, triangleC, scaleX, scaleY, scaleZ, direction, speed, translation, uTrans, vTrans);
     }
 
     private static void readFaceIndices(ModelDataBuffer faceIdx, ModelDataBuffer faceCompress, short[] faceA, short[] faceB, short[] faceC) {
@@ -477,7 +680,55 @@ final class RsModelData {
                 }
             }
         }
-        return new RsModelData(verticesX.clone(), verticesY.clone(), verticesZ.clone(), faceA.clone(), faceB.clone(), faceC.clone(), recolored);
+        return new RsModelData(verticesX.clone(), verticesY.clone(), verticesZ.clone(), faceA.clone(), faceB.clone(), faceC.clone(), recolored,
+                faceTextures == null ? null : faceTextures.clone(),
+                faceTextureCoords == null ? null : faceTextureCoords.clone(),
+                textureRenderTypes == null ? null : textureRenderTypes.clone(),
+                textureTriangleA == null ? null : textureTriangleA.clone(),
+                textureTriangleB == null ? null : textureTriangleB.clone(),
+                textureTriangleC == null ? null : textureTriangleC.clone(),
+                textureScaleX == null ? null : textureScaleX.clone(),
+                textureScaleY == null ? null : textureScaleY.clone(),
+                textureScaleZ == null ? null : textureScaleZ.clone(),
+                textureDirection == null ? null : textureDirection.clone(),
+                textureSpeed == null ? null : textureSpeed.clone(),
+                textureTranslation == null ? null : textureTranslation.clone(),
+                textureUTrans == null ? null : textureUTrans.clone(),
+                textureVTrans == null ? null : textureVTrans.clone(),
+                rawData, faceTextureOffset);
+    }
+
+    RsModelData withFaceTextures(short[] updatedFaceTextures) {
+        return new RsModelData(verticesX.clone(), verticesY.clone(), verticesZ.clone(), faceA.clone(), faceB.clone(), faceC.clone(), faceColors.clone(),
+                updatedFaceTextures == null ? null : updatedFaceTextures.clone(),
+                faceTextureCoords == null ? null : faceTextureCoords.clone(),
+                textureRenderTypes == null ? null : textureRenderTypes.clone(),
+                textureTriangleA == null ? null : textureTriangleA.clone(),
+                textureTriangleB == null ? null : textureTriangleB.clone(),
+                textureTriangleC == null ? null : textureTriangleC.clone(),
+                textureScaleX == null ? null : textureScaleX.clone(),
+                textureScaleY == null ? null : textureScaleY.clone(),
+                textureScaleZ == null ? null : textureScaleZ.clone(),
+                textureDirection == null ? null : textureDirection.clone(),
+                textureSpeed == null ? null : textureSpeed.clone(),
+                textureTranslation == null ? null : textureTranslation.clone(),
+                textureUTrans == null ? null : textureUTrans.clone(),
+                textureVTrans == null ? null : textureVTrans.clone(),
+                rawData, faceTextureOffset);
+    }
+
+    byte[] encodeFaceTexturePatch(short[] updatedFaceTextures) {
+        if (rawData == null || faceTextureOffset < 0 || faceTextures == null || updatedFaceTextures == null || updatedFaceTextures.length != faceTextures.length) {
+            return null;
+        }
+        byte[] encoded = rawData.clone();
+        int offset = faceTextureOffset;
+        for (short value : updatedFaceTextures) {
+            int textureId = value < 0 ? 65535 : value & 0xFFFF;
+            encoded[offset++] = (byte) (textureId >> 8);
+            encoded[offset++] = (byte) textureId;
+        }
+        return encoded;
     }
 
     RsModelData rotated(int rotationX, int rotationY, int rotationZ) {
@@ -487,7 +738,22 @@ final class RsModelData {
         rotateAxis(x, z, rotationY);
         rotateAxis(y, z, -rotationX);
         rotateAxis(x, y, rotationZ);
-        return new RsModelData(x, y, z, faceA.clone(), faceB.clone(), faceC.clone(), faceColors.clone());
+        return new RsModelData(x, y, z, faceA.clone(), faceB.clone(), faceC.clone(), faceColors.clone(),
+                faceTextures == null ? null : faceTextures.clone(),
+                faceTextureCoords == null ? null : faceTextureCoords.clone(),
+                textureRenderTypes == null ? null : textureRenderTypes.clone(),
+                textureTriangleA == null ? null : textureTriangleA.clone(),
+                textureTriangleB == null ? null : textureTriangleB.clone(),
+                textureTriangleC == null ? null : textureTriangleC.clone(),
+                textureScaleX == null ? null : textureScaleX.clone(),
+                textureScaleY == null ? null : textureScaleY.clone(),
+                textureScaleZ == null ? null : textureScaleZ.clone(),
+                textureDirection == null ? null : textureDirection.clone(),
+                textureSpeed == null ? null : textureSpeed.clone(),
+                textureTranslation == null ? null : textureTranslation.clone(),
+                textureUTrans == null ? null : textureUTrans.clone(),
+                textureVTrans == null ? null : textureVTrans.clone(),
+                rawData, faceTextureOffset);
     }
 
     RsModelData translated(int dx, int dy, int dz) {
@@ -499,7 +765,22 @@ final class RsModelData {
             y[i] += dy;
             z[i] += dz;
         }
-        return new RsModelData(x, y, z, faceA.clone(), faceB.clone(), faceC.clone(), faceColors.clone());
+        return new RsModelData(x, y, z, faceA.clone(), faceB.clone(), faceC.clone(), faceColors.clone(),
+                faceTextures == null ? null : faceTextures.clone(),
+                faceTextureCoords == null ? null : faceTextureCoords.clone(),
+                textureRenderTypes == null ? null : textureRenderTypes.clone(),
+                textureTriangleA == null ? null : textureTriangleA.clone(),
+                textureTriangleB == null ? null : textureTriangleB.clone(),
+                textureTriangleC == null ? null : textureTriangleC.clone(),
+                textureScaleX == null ? null : textureScaleX.clone(),
+                textureScaleY == null ? null : textureScaleY.clone(),
+                textureScaleZ == null ? null : textureScaleZ.clone(),
+                textureDirection == null ? null : textureDirection.clone(),
+                textureSpeed == null ? null : textureSpeed.clone(),
+                textureTranslation == null ? null : textureTranslation.clone(),
+                textureUTrans == null ? null : textureUTrans.clone(),
+                textureVTrans == null ? null : textureVTrans.clone(),
+                rawData, faceTextureOffset);
     }
 
     private static void rotateAxis(int[] a, int[] b, int clientAngle) {
@@ -521,12 +802,14 @@ final class RsModelData {
         int vertexCount = 0;
         int faceCount = 0;
         int active = 0;
+        boolean hasAnyTextures = false;
         for (RsModelData model : models) {
             if (model == null) {
                 continue;
             }
             vertexCount += model.verticesX.length;
             faceCount += model.faceA.length;
+            hasAnyTextures |= model.faceTextures != null;
             active++;
         }
         if (active == 0) {
@@ -546,6 +829,14 @@ final class RsModelData {
         short[] b = new short[faceCount];
         short[] c = new short[faceCount];
         short[] colors = new short[faceCount];
+        short[] textures = hasAnyTextures ? new short[faceCount] : null;
+        byte[] textureCoords = hasAnyTextures ? new byte[faceCount] : null;
+        if (textures != null) {
+            java.util.Arrays.fill(textures, (short) -1);
+        }
+        if (textureCoords != null) {
+            java.util.Arrays.fill(textureCoords, (byte) -1);
+        }
         int vertexOffset = 0;
         int faceOffset = 0;
         for (RsModelData model : models) {
@@ -560,11 +851,21 @@ final class RsModelData {
                 b[faceOffset + i] = (short) (vertexOffset + (model.faceB[i] & 0xFFFF));
                 c[faceOffset + i] = (short) (vertexOffset + (model.faceC[i] & 0xFFFF));
                 colors[faceOffset + i] = model.faceColors[i];
+                if (textures != null && model.faceTextures != null) {
+                    textures[faceOffset + i] = model.faceTextures[i];
+                }
+                if (textureCoords != null && model.faceTextureCoords != null) {
+                    textureCoords[faceOffset + i] = model.faceTextureCoords[i];
+                }
             }
             vertexOffset += model.verticesX.length;
             faceOffset += model.faceA.length;
         }
-        return new RsModelData(x, y, z, a, b, c, colors);
+        return new RsModelData(x, y, z, a, b, c, colors, textures, textureCoords,
+                null, null, null, null,
+                null, null, null,
+                null, null, null, null, null,
+                null, -1);
     }
 
     int[] verticesX() { return verticesX; }
@@ -574,5 +875,26 @@ final class RsModelData {
     short[] faceB() { return faceB; }
     short[] faceC() { return faceC; }
     short[] faceColors() { return faceColors; }
-}
+    short[] faceTextures() { return faceTextures; }
+    byte[] faceTextureCoords() { return faceTextureCoords; }
+    byte[] textureRenderTypes() { return textureRenderTypes; }
+    short[] textureTriangleA() { return textureTriangleA; }
+    short[] textureTriangleB() { return textureTriangleB; }
+    short[] textureTriangleC() { return textureTriangleC; }
+    int[] textureScaleX() { return textureScaleX; }
+    int[] textureScaleY() { return textureScaleY; }
+    int[] textureScaleZ() { return textureScaleZ; }
+    byte[] textureDirection() { return textureDirection; }
+    byte[] textureSpeed() { return textureSpeed; }
+    int[] textureTranslation() { return textureTranslation; }
+    int[] textureUTrans() { return textureUTrans; }
+    int[] textureVTrans() { return textureVTrans; }
 
+    private record TextureMapping(byte[] types, short[] triangleA, short[] triangleB, short[] triangleC,
+                                  int[] scaleX, int[] scaleY, int[] scaleZ,
+                                  byte[] direction, byte[] speed, int[] translation, int[] uTrans, int[] vTrans) {
+        private static TextureMapping empty() {
+            return new TextureMapping(null, null, null, null, null, null, null, null, null, null, null, null);
+        }
+    }
+}

@@ -12,6 +12,10 @@ import javax.swing.*;
 import javax.swing.border.Border;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.text.AbstractDocument;
+import javax.swing.text.AttributeSet;
+import javax.swing.text.BadLocationException;
+import javax.swing.text.DocumentFilter;
 import javax.swing.text.JTextComponent;
 import java.awt.*;
 import java.awt.event.MouseWheelEvent;
@@ -40,6 +44,8 @@ public class ItemEditorApp {
     private static final Color TEXT = new Color(198, 198, 198);
     private static final Color MUTED = new Color(165, 165, 165);
     private static final Color ACCENT = new Color(220, 138, 0);
+    private static final String[] DEFAULT_GROUND_OPTIONS = {"take", "examine", "destroy"};
+    private static final String[] DEFAULT_INVENTORY_OPTIONS = {"wear", "wield", "eat", "drink", "use", "drop", "destroy", "check", "empty", "open", "rub"};
     private static final double PREVIEW_ZOOM_MULTIPLIER = 1.0;
     private static final Path APP_BASE = Paths.get("").toAbsolutePath().normalize();
     private static final Path RECENT_PATHS_FILE = APP_BASE.resolve("recent_paths.dat");
@@ -59,13 +65,8 @@ public class ItemEditorApp {
     private final JCheckBox itemStackableBox;
     private final JCheckBox itemMembersBox;
     private final JTextField itemModelIdField;
-    private final JTextField itemModelZoomField;
-    private final JTextField itemRotationXField;
-    private final JTextField itemRotationYField;
-    private final JTextField itemOffsetXField;
-    private final JTextField itemOffsetYField;
-    private final JTextField itemEquipSlotField;
-    private final JTextField itemEquipTypeField;
+    private final JComboBox<String> itemEquipSlotCombo;
+    private final JComboBox<String> itemEquipTypeCombo;
     private final JTextField itemMaleEquipField;
     private final JTextField itemFemaleEquipField;
     private final JTextField itemMaleWearOffsetXField;
@@ -77,18 +78,36 @@ public class ItemEditorApp {
     private final JTextField itemCertField;
     private final JTextField itemLendField;
     private final JTextField itemTeamField;
-    private final JTextArea itemGroundOptionsArea;
-    private final JTextArea itemInventoryOptionsArea;
+    private final DefaultListModel<OptionEntry> groundOptionListModel;
+    private final JList<OptionEntry> groundOptionList;
+    private final DefaultListModel<OptionEntry> inventoryOptionListModel;
+    private final JList<OptionEntry> inventoryOptionList;
+    private final JButton groundOptionEditButton;
+    private final JButton groundOptionRemoveButton;
+    private final JButton groundOptionPresetButton;
+    private final JTextField groundOptionCustomField;
+    private final JButton groundOptionCustomApplyButton;
+    private final JButton inventoryOptionEditButton;
+    private final JButton inventoryOptionRemoveButton;
+    private final JButton inventoryOptionPresetButton;
+    private final JTextField inventoryOptionCustomField;
+    private final JButton inventoryOptionCustomApplyButton;
     private final JTextArea itemTextureArea;
     private final DefaultListModel<RecolorEntry> itemRecolorListModel;
     private final JList<RecolorEntry> itemRecolorList;
+    private final DefaultListModel<ModelFaceEntry> itemFaceTextureListModel;
+    private final JList<ModelFaceEntry> itemFaceTextureList;
+    private final DefaultListModel<TextureThumbnailEntry> texturePickerListModel;
+    private final JList<TextureThumbnailEntry> texturePickerList;
     private final JSlider recolorHueSlider;
     private final JSlider recolorSaturationSlider;
     private final JSlider recolorLightnessSlider;
-    private final JTextField recolorPackedValueField;
+    private final JTextField recolorDefaultPackedValueField;
+    private final JTextField recolorNewPackedValueField;
     private final JPanel recolorOriginalSwatch;
     private final JPanel recolorModifiedSwatch;
-    private final JButton recolorSelectColorButton;
+    private final JPanel textureCurrentSwatch;
+    private final JButton textureClearButton;
     private final JCheckBox recolorShowFacesBox;
     private final DefaultListModel<String> itemParamListModel;
     private final JList<String> itemParamList;
@@ -113,6 +132,7 @@ public class ItemEditorApp {
     private final JLabel listTitleLabel;
     private final JLabel listSubtitleLabel;
     private final ItemPreviewPanel itemPreviewPanel;
+    private JPanel appearanceFacePanel;
 
     private ItemDefinitionsService itemService;
     private ItemModelRenderer itemModelRenderer;
@@ -132,10 +152,17 @@ public class ItemEditorApp {
     private Map<Integer, Object> currentItemParams;
     private int[] currentOriginalModelColors;
     private int[] currentModifiedModelColors;
+    private short[] currentOriginalFaceTextures = new short[0];
+    private short[] currentModifiedFaceTextures = new short[0];
     private int[] selectedHighlightedOriginalColors = new int[0];
+    private int[] selectedHighlightedFaceIndices = new int[0];
+    private boolean suppressTextureUpdates;
     private final Timer filterDebounceTimer;
+    private final Timer selectionDebounceTimer;
     private final Timer wornPreviewAnimationTimer;
     private final List<String> recentCachePaths;
+    private JSplitPane bottomSplitPane;
+    private JPanel bottomConsolePanel;
 
     public ItemEditorApp() {
         frame = new JFrame("Item Editor");
@@ -150,13 +177,8 @@ public class ItemEditorApp {
         itemStackableBox = createItemCheckBox("Stackable");
         itemMembersBox = createItemCheckBox("Members");
         itemModelIdField = createItemField();
-        itemModelZoomField = createItemField();
-        itemRotationXField = createItemField();
-        itemRotationYField = createItemField();
-        itemOffsetXField = createItemField();
-        itemOffsetYField = createItemField();
-        itemEquipSlotField = createItemField();
-        itemEquipTypeField = createItemField();
+        itemEquipSlotCombo = createEquipSlotCombo();
+        itemEquipTypeCombo = createEquipTypeCombo();
         itemMaleEquipField = createItemField();
         itemFemaleEquipField = createItemField();
         itemMaleWearOffsetXField = createItemField();
@@ -168,28 +190,49 @@ public class ItemEditorApp {
         itemCertField = createItemField();
         itemLendField = createItemField();
         itemTeamField = createItemField();
-        itemGroundOptionsArea = createItemBlock();
-        itemInventoryOptionsArea = createItemBlock();
+        groundOptionListModel = new DefaultListModel<>();
+        groundOptionList = new JList<>(groundOptionListModel);
+        inventoryOptionListModel = new DefaultListModel<>();
+        inventoryOptionList = new JList<>(inventoryOptionListModel);
+        groundOptionEditButton = new JButton("Edit");
+        groundOptionRemoveButton = new JButton("Clear");
+        groundOptionPresetButton = new JButton("v");
+        groundOptionCustomField = createItemField();
+        groundOptionCustomApplyButton = new JButton("Apply");
+        inventoryOptionEditButton = new JButton("Edit");
+        inventoryOptionRemoveButton = new JButton("Clear");
+        inventoryOptionPresetButton = new JButton("v");
+        inventoryOptionCustomField = createItemField();
+        inventoryOptionCustomApplyButton = new JButton("Apply");
         itemTextureArea = createItemBlock();
         itemRecolorListModel = new DefaultListModel<>();
         itemRecolorList = new JList<>(itemRecolorListModel);
+        itemFaceTextureListModel = new DefaultListModel<>();
+        itemFaceTextureList = new JList<>(itemFaceTextureListModel);
+        texturePickerListModel = new DefaultListModel<>();
+        texturePickerList = new JList<>(texturePickerListModel);
         recolorHueSlider = createPreviewSlider(0, 63, 1);
         recolorSaturationSlider = createPreviewSlider(0, 7, 1);
         recolorLightnessSlider = createPreviewSlider(0, 127, 1);
-        recolorPackedValueField = createReadOnlyField();
-        recolorPackedValueField.setEditable(true);
-        recolorPackedValueField.setColumns(6);
+        recolorDefaultPackedValueField = createReadOnlyField();
+        recolorDefaultPackedValueField.setColumns(0);
+        recolorNewPackedValueField = createReadOnlyField();
+        recolorNewPackedValueField.setEditable(true);
+        recolorNewPackedValueField.setColumns(6);
+        ((AbstractDocument) recolorNewPackedValueField.getDocument()).setDocumentFilter(new DigitLimitFilter(5));
         recolorOriginalSwatch = new JPanel();
         recolorModifiedSwatch = new JPanel();
-        recolorSelectColorButton = new JButton("Colours");
-        recolorShowFacesBox = createItemCheckBox("Show faces");
+        textureCurrentSwatch = new JPanel();
+        textureClearButton = new JButton("Clear");
+        textureClearButton.setEnabled(false);
+        recolorShowFacesBox = createItemCheckBox("Highlight faces");
         itemParamListModel = new DefaultListModel<>();
         itemParamList = new JList<>(itemParamListModel);
         itemParamAddButton = new JButton("Add");
         itemParamRemoveButton = new JButton("Remove");
         itemParamApplyTextButton = new JButton("Apply Text");
         itemPreviewModeCombo = new JComboBox<>(ItemPreviewMode.values());
-        itemPreviewZoomSlider = createPreviewSlider(200, 6000, 10);
+        itemPreviewZoomSlider = createPreviewSlider(200, 20000, 10);
         itemPreviewRotationXSlider = createPreviewSlider(-1024, 1023, 1);
         itemPreviewRotationYSlider = createPreviewSlider(-1024, 1023, 1);
         itemPreviewRotationZSlider = createPreviewSlider(-1024, 1023, 1);
@@ -214,6 +257,8 @@ public class ItemEditorApp {
         previewOverlayDragBounds = new Rectangle(0, 0, 0, 0);
         filterDebounceTimer = new Timer(120, e -> applyFilterNow(false));
         filterDebounceTimer.setRepeats(false);
+        selectionDebounceTimer = new Timer(80, e -> loadSelectedItem());
+        selectionDebounceTimer.setRepeats(false);
         wornPreviewAnimationTimer = new Timer(90, e -> {
             if (currentItemId != null && itemPreviewModeCombo.getSelectedItem() != ItemPreviewMode.INVENTORY
                     && itemPreviewPanel.hasRenderedImage() && !itemPreviewPanel.hasRenderFailure()) {
@@ -273,9 +318,17 @@ public class ItemEditorApp {
         main.setBackground(BG);
         main.setBorder(BorderFactory.createEmptyBorder(10, 10, 10, 10));
         main.add(buildItemToolbar(), BorderLayout.NORTH);
-        main.add(buildCenterPanel(), BorderLayout.CENTER);
-        main.add(buildBottomPanel(), BorderLayout.SOUTH);
 
+        // Create a panel for the center content (horizontal split)
+        JPanel centerPanel = new JPanel(new BorderLayout());
+        centerPanel.setBackground(BG);
+        centerPanel.add(buildCenterPanel(), BorderLayout.CENTER);
+
+        // Now build the bottom panel which contains the split pane
+        //JPanel bottomPanel = buildBottomPanel();
+
+        // Get the split pane from bottom panel and set its top component
+        main.add(centerPanel, BorderLayout.CENTER);
         frame.setContentPane(main);
     }
 
@@ -289,6 +342,7 @@ public class ItemEditorApp {
         JButton recentButton = createButton("Recent", new Color(77, 77, 77));
         JButton browseButton = createButton("Browse", new Color(77, 77, 77));
         JButton loadButton = createButton("Load", ACCENT);
+        JButton packButton = createButton("Pack", new Color(77, 77, 77));
 
         c.gridx = 0;
         c.gridy = 0;
@@ -308,9 +362,13 @@ public class ItemEditorApp {
         c.gridx = 4;
         panel.add(loadButton, c);
 
+        c.gridx = 5;
+        panel.add(packButton, c);
+
         recentButton.addActionListener(e -> showRecentCacheMenu(recentButton));
         browseButton.addActionListener(e -> chooseDirectory(cacheField));
         loadButton.addActionListener(e -> loadCache());
+        packButton.addActionListener(e -> packCurrentItem());
         return panel;
     }
 
@@ -327,6 +385,8 @@ public class ItemEditorApp {
         split.setDividerSize(8);
         split.setResizeWeight(0.16);
         split.setDividerLocation(240);
+
+        // Wrap the horizontal split in a panel that will be the top component of the resizable console
         return split;
     }
 
@@ -361,7 +421,7 @@ public class ItemEditorApp {
             itemPreviewPanel.repaint();
         });
         controlsCard.add(buildPreviewControls(), BorderLayout.CENTER);
-        controlsCard.setPreferredSize(new Dimension(520, 260));
+        controlsCard.setPreferredSize(new Dimension(520, 228));
 
         JPanel formCard = buildItemFormCard();
         JSplitPane topSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, controlsCard, formCard);
@@ -375,9 +435,9 @@ public class ItemEditorApp {
         JPanel detailsCard = createCardPanel();
         detailsCard.setLayout(new GridLayout(1, 3, 10, 0));
         detailsCard.setAlignmentX(Component.LEFT_ALIGNMENT);
-        detailsCard.setPreferredSize(new Dimension(100, 348));
+        detailsCard.setPreferredSize(new Dimension(100, 468));
         installWheelRelay(detailsCard);
-        detailsCard.add(createSplitReadOnlyAreaCard("Actions", "Ground / inventory", "Ground", itemGroundOptionsArea, "Inventory", itemInventoryOptionsArea));
+        detailsCard.add(buildOptionsCard());
         detailsCard.add(buildAppearanceCard());
         detailsCard.add(buildItemParamsCard());
 
@@ -502,16 +562,12 @@ public class ItemEditorApp {
         flagsPanel.add(itemMembersBox);
         row = addFormRow(form, c, row, "Flags", flagsPanel, "Model Id", itemModelIdField);
 
-        row = addFormRow(form, c, row, "Zoom", itemModelZoomField, "Equip Slot", itemEquipSlotField);
-        row = addFormRow(form, c, row, "Rotation X", itemRotationXField, "Rotation Y", itemRotationYField);
-        row = addFormRow(form, c, row, "Offset X", itemOffsetXField, "Offset Y", itemOffsetYField);
-        row = addFormRow(form, c, row, "Equip Type", itemEquipTypeField, "Male Equip", itemMaleEquipField);
-        row = addFormRow(form, c, row, "Female Equip", itemFemaleEquipField, "Certificate", itemCertField);
+        row = addFormRow(form, c, row, "Equip Slot", itemEquipSlotCombo, "Equip Type", itemEquipTypeCombo);
+        row = addFormRow(form, c, row, "Male Equip", itemMaleEquipField, "Female Equip", itemFemaleEquipField);
+        row = addFormRow(form, c, row, "Certificate", itemCertField, "Lend", itemLendField);
         row = addFormRow(form, c, row, "Male Wear X", createStepperField(itemMaleWearOffsetXField, 1), "Female Wear X", createStepperField(itemFemaleWearOffsetXField, 1));
         row = addFormRow(form, c, row, "Male Wear Y", createStepperField(itemMaleWearOffsetYField, 1), "Female Wear Y", createStepperField(itemFemaleWearOffsetYField, 1));
         row = addFormRow(form, c, row, "Male Wear Z", createStepperField(itemMaleWearOffsetZField, 1), "Female Wear Z", createStepperField(itemFemaleWearOffsetZField, 1));
-        addFormRow(form, c, row, "Lend", itemLendField, "Inventory", createReadOnlyAreaCard("Options", "Use / drop", itemInventoryOptionsArea));
-
             formCard.add(wrapScroll(form), BorderLayout.CENTER);
             return formCard;
         }
@@ -561,7 +617,7 @@ public class ItemEditorApp {
         slider.addChangeListener(e -> {
             valueField.setText(String.valueOf(slider.getValue()));
             if (!suppressPreviewUpdates) {
-                pushPreviewOverrides();
+                pushPreviewOverrides(!slider.getValueIsAdjusting(), !slider.getValueIsAdjusting());
             }
         });
         slider.addMouseWheelListener(e -> adjustPreviewSlider(slider, -e.getWheelRotation() * step));
@@ -629,6 +685,69 @@ public class ItemEditorApp {
         return panel;
     }
 
+    private JPanel buildOptionsCard() {
+        JPanel panel = new JPanel(new GridLayout(1, 2, 10, 0));
+        panel.setOpaque(false);
+        panel.add(buildOptionEditorCard("Ground", groundOptionList, groundOptionEditButton, groundOptionRemoveButton, groundOptionPresetButton, groundOptionCustomField, groundOptionCustomApplyButton));
+        panel.add(buildOptionEditorCard("Inventory", inventoryOptionList, inventoryOptionEditButton, inventoryOptionRemoveButton, inventoryOptionPresetButton, inventoryOptionCustomField, inventoryOptionCustomApplyButton));
+        return wrapSectionCard("Actions", "Ground / inventory", panel);
+    }
+
+    private JPanel buildInlineOptionCard(String title, JList<OptionEntry> list, JButton editButton, JButton clearButton, JButton presetButton, JTextField customField, JButton customApplyButton) {
+        JPanel panel = new JPanel(new BorderLayout(6, 6));
+        panel.setOpaque(false);
+        panel.add(buildOptionEditorCard(title, list, editButton, clearButton, presetButton, customField, customApplyButton), BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JPanel buildOptionEditorCard(String title, JList<OptionEntry> list, JButton editButton, JButton clearButton, JButton presetButton, JTextField customField, JButton customApplyButton) {
+        JPanel panel = createCardPanel();
+        panel.setLayout(new BorderLayout(6, 6));
+        panel.add(createSectionHeader(title, "Click to edit"), BorderLayout.NORTH);
+        styleOptionList(list);
+        JPanel toolbar = new JPanel();
+        toolbar.setOpaque(false);
+        toolbar.setLayout(new BoxLayout(toolbar, BoxLayout.Y_AXIS));
+        JPanel buttonRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        buttonRow.setOpaque(false);
+        styleButton(editButton, ACCENT);
+        styleButton(clearButton, new Color(77, 77, 77));
+        styleButton(presetButton, new Color(77, 77, 77));
+        styleButton(customApplyButton, new Color(77, 77, 77));
+        presetButton.setMargin(new Insets(2, 10, 2, 10));
+        customField.setColumns(12);
+        buttonRow.add(editButton);
+        buttonRow.add(clearButton);
+        buttonRow.add(presetButton);
+        JPanel customRow = new JPanel(new BorderLayout(6, 0));
+        customRow.setOpaque(false);
+        customRow.add(customField, BorderLayout.CENTER);
+        customRow.add(customApplyButton, BorderLayout.EAST);
+        toolbar.add(buttonRow);
+        toolbar.add(Box.createVerticalStrut(6));
+        toolbar.add(customRow);
+        panel.add(toolbar, BorderLayout.SOUTH);
+        panel.add(wrapScroll(list), BorderLayout.CENTER);
+        return panel;
+    }
+
+    private JPanel wrapSectionCard(String title, String subtitle, JComponent content) {
+        JPanel panel = new JPanel(new BorderLayout(8, 8));
+        panel.setOpaque(false);
+        panel.add(createSectionHeader(title, subtitle), BorderLayout.NORTH);
+        panel.add(content, BorderLayout.CENTER);
+        return panel;
+    }
+
+    private void styleOptionList(JList<OptionEntry> list) {
+        list.setBackground(INPUT_BG);
+        list.setForeground(TEXT);
+        list.setSelectionBackground(ACCENT);
+        list.setSelectionForeground(Color.WHITE);
+        list.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        installWheelRelay(list);
+    }
+
     private JPanel buildAppearanceCard() {
         JPanel panel = new JPanel(new BorderLayout(8, 8));
         panel.setOpaque(false);
@@ -640,67 +759,139 @@ public class ItemEditorApp {
         itemRecolorList.setSelectionForeground(Color.WHITE);
         itemRecolorList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         installConditionalLocalWheelRelay(itemRecolorList);
-
+        itemFaceTextureList.setBackground(INPUT_BG);
+        itemFaceTextureList.setForeground(TEXT);
+        itemFaceTextureList.setSelectionBackground(ACCENT);
+        itemFaceTextureList.setSelectionForeground(Color.WHITE);
+        itemFaceTextureList.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
+        texturePickerList.setBackground(INPUT_BG);
+        texturePickerList.setForeground(TEXT);
+        texturePickerList.setSelectionBackground(ACCENT);
+        texturePickerList.setSelectionForeground(Color.WHITE);
+        texturePickerList.setCellRenderer(new TextureThumbnailRenderer());
+        texturePickerList.setLayoutOrientation(JList.HORIZONTAL_WRAP);
+        texturePickerList.setVisibleRowCount(-1);
+        texturePickerList.setFixedCellWidth(112);
+        texturePickerList.setFixedCellHeight(72);
         recolorOriginalSwatch.setPreferredSize(new Dimension(36, 24));
         recolorModifiedSwatch.setPreferredSize(new Dimension(36, 24));
+        textureCurrentSwatch.setPreferredSize(new Dimension(44, 44));
         recolorOriginalSwatch.setBorder(BorderFactory.createLineBorder(BORDER));
         recolorModifiedSwatch.setBorder(BorderFactory.createLineBorder(BORDER));
-        styleButton(recolorSelectColorButton, new Color(77, 77, 77));
-        recolorSelectColorButton.setPreferredSize(new Dimension(84, 26));
-        recolorSelectColorButton.addActionListener(e -> openRecolorPicker());
+        textureCurrentSwatch.setBorder(BorderFactory.createLineBorder(BORDER));
+        styleButton(textureClearButton, new Color(77, 77, 77));
+        recolorModifiedSwatch.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        recolorModifiedSwatch.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                openRecolorPicker();
+            }
+        });
+        textureCurrentSwatch.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        textureCurrentSwatch.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                openTexturePicker();
+            }
+        });
+        textureClearButton.addActionListener(e -> clearSelectedFaceTextures());
         recolorShowFacesBox.setSelected(true);
         recolorShowFacesBox.addActionListener(e -> {
             selectedHighlightedOriginalColors = highlightedOriginalColorsFromSelection();
             itemPreviewPanel.invalidateRenderKey();
             itemPreviewPanel.queueRenderNow();
         });
-        recolorPackedValueField.addActionListener(e -> applyPackedRecolorField());
-        recolorPackedValueField.addFocusListener(new java.awt.event.FocusAdapter() {
-            @Override
-            public void focusLost(java.awt.event.FocusEvent e) {
-                applyPackedRecolorField();
-            }
-        });
-
-        JPanel picker = new JPanel(new BorderLayout(6, 6));
+        JPanel picker = new JPanel(new BorderLayout(6, 10));
         picker.setOpaque(false);
-        JPanel swatches = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        JPanel swatches = new JPanel(new GridBagLayout());
         swatches.setOpaque(false);
-        swatches.add(createLabel("Orig", true));
-        swatches.add(recolorOriginalSwatch);
-        swatches.add(createLabel("New", true));
-        swatches.add(recolorModifiedSwatch);
-        swatches.add(createLabel("Id", true));
-        swatches.add(recolorPackedValueField);
-        swatches.add(recolorSelectColorButton);
+        recolorDefaultPackedValueField.setPreferredSize(new Dimension(50, 24));
+        recolorDefaultPackedValueField.setMinimumSize(new Dimension(50, 24));
+        recolorDefaultPackedValueField.setMaximumSize(new Dimension(50, 24));
+        recolorNewPackedValueField.setColumns(0);
+        recolorNewPackedValueField.setPreferredSize(new Dimension(50, 24));
+        recolorNewPackedValueField.setMinimumSize(new Dimension(50, 24));
+        recolorNewPackedValueField.setMaximumSize(new Dimension(50, 24));
+        GridBagConstraints swatchConstraints = new GridBagConstraints();
+        swatchConstraints.anchor = GridBagConstraints.WEST;
+        swatchConstraints.insets = new Insets(0, 0, 0, 8);
+        swatchConstraints.gridx = 0;
+        swatchConstraints.gridy = 0;
+        swatches.add(createLabel("Orig", true), swatchConstraints);
+        swatchConstraints.gridx = 1;
+        swatchConstraints.insets = new Insets(0, 0, 0, 0);
+        swatches.add(createLabel("New", true), swatchConstraints);
+        swatchConstraints.gridy = 1;
+        swatchConstraints.gridx = 0;
+        swatchConstraints.insets = new Insets(2, 0, 0, 8);
+        swatches.add(recolorOriginalSwatch, swatchConstraints);
+        swatchConstraints.gridx = 1;
+        swatchConstraints.insets = new Insets(2, 0, 0, 0);
+        swatches.add(recolorModifiedSwatch, swatchConstraints);
+        swatchConstraints.gridy = 2;
+        swatchConstraints.gridx = 0;
+        swatchConstraints.insets = new Insets(2, 0, 0, 8);
+        swatches.add(recolorDefaultPackedValueField, swatchConstraints);
+        swatchConstraints.gridx = 1;
+        swatchConstraints.insets = new Insets(2, 0, 0, 0);
+        swatches.add(recolorNewPackedValueField, swatchConstraints);
         JPanel optionsRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
         optionsRow.setOpaque(false);
-        optionsRow.add(recolorShowFacesBox);
+        optionsRow.add(createLabel("Tex", true));
+        optionsRow.add(textureCurrentSwatch);
+        optionsRow.add(textureClearButton);
 
-        JPanel sliders = new JPanel(new GridLayout(3, 1, 0, 4));
+        JPanel sliders = new JPanel(new GridLayout(3, 1, 0, 8));
         sliders.setOpaque(false);
         sliders.add(buildSimpleSliderRow("Hue", recolorHueSlider));
         sliders.add(buildSimpleSliderRow("Sat", recolorSaturationSlider));
         sliders.add(buildSimpleSliderRow("Light", recolorLightnessSlider));
-        picker.add(swatches, BorderLayout.NORTH);
+        picker.setPreferredSize(new Dimension(100, 118));
+        JPanel pickerTop = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        pickerTop.setOpaque(false);
+        pickerTop.setBorder(BorderFactory.createEmptyBorder(0, 0, 4, 0));
+        swatches.setAlignmentX(Component.LEFT_ALIGNMENT);
+        pickerTop.add(swatches);
+        picker.add(pickerTop, BorderLayout.NORTH);
         picker.add(sliders, BorderLayout.CENTER);
         picker.add(optionsRow, BorderLayout.SOUTH);
 
-        JSplitPane top = new JSplitPane(JSplitPane.VERTICAL_SPLIT, wrapScroll(itemRecolorList), picker);
-        top.setBorder(null);
-        top.setBackground(PANEL);
-        top.setDividerSize(8);
-        top.setResizeWeight(0.58);
-        top.setDividerLocation(164);
+        JScrollPane recolorScroll = wrapScroll(itemRecolorList);
+        recolorScroll.setPreferredSize(new Dimension(100, 180));
+        JPanel recolorPanel = new JPanel(new BorderLayout(0, 4));
+        recolorPanel.setOpaque(false);
+        JPanel recolorHeader = new JPanel(new BorderLayout());
+        recolorHeader.setOpaque(false);
+        recolorHeader.add(createLabel("Recolors", true), BorderLayout.WEST);
+        recolorShowFacesBox.setForeground(TEXT);
+        recolorShowFacesBox.setOpaque(false);
+        recolorHeader.add(recolorShowFacesBox, BorderLayout.EAST);
+        recolorPanel.add(recolorHeader, BorderLayout.NORTH);
+        recolorPanel.add(recolorScroll, BorderLayout.CENTER);
+        appearanceFacePanel = new JPanel(new BorderLayout(0, 4));
+        appearanceFacePanel.setOpaque(false);
+        JPanel facesHeader = new JPanel(new BorderLayout());
+        facesHeader.setOpaque(false);
+        facesHeader.add(createLabel("Faces", true), BorderLayout.WEST);
+        appearanceFacePanel.add(facesHeader, BorderLayout.NORTH);
+        JScrollPane faceScroll = wrapScroll(itemFaceTextureList);
+        faceScroll.setPreferredSize(new Dimension(100, 244));
+        appearanceFacePanel.add(faceScroll, BorderLayout.CENTER);
+        appearanceFacePanel.setVisible(false);
 
-        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, top, wrapScroll(itemTextureArea));
-        split.setBorder(null);
-        split.setBackground(PANEL);
-        split.setDividerSize(8);
-        split.setResizeWeight(0.72);
-        split.setDividerLocation(278);
+        JPanel content = new JPanel();
+        content.setOpaque(false);
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        recolorPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        picker.setAlignmentX(Component.LEFT_ALIGNMENT);
+        appearanceFacePanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+        content.add(recolorPanel);
+        content.add(Box.createVerticalStrut(8));
+        content.add(picker);
+        content.add(Box.createVerticalStrut(8));
+        content.add(appearanceFacePanel);
 
-        panel.add(split, BorderLayout.CENTER);
+        panel.add(content, BorderLayout.CENTER);
         return panel;
     }
 
@@ -790,10 +981,86 @@ public class ItemEditorApp {
     }
 
     private JPanel buildBottomPanel() {
-        JPanel container = new JPanel(new BorderLayout(8, 8));
+        JPanel container = new JPanel(new BorderLayout());
         container.setBackground(BG);
 
-        container.add(wrapScroll(logArea), BorderLayout.CENTER);
+        // Create the console panel
+        JPanel consolePanel = new JPanel(new BorderLayout());
+        consolePanel.setBackground(BG);
+
+        JScrollPane logScroll = wrapScroll(logArea);
+
+        JLabel titleLabel = createLabel("Console", false);
+        JButton hideButton = new JButton("▼");
+        hideButton.setFocusable(false);
+        hideButton.setBackground(PANEL_ALT);
+        hideButton.setForeground(MUTED);
+        hideButton.setBorderPainted(false);
+        hideButton.setContentAreaFilled(false);
+        hideButton.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        hideButton.putClientProperty(FlatClientProperties.STYLE, "arc:8");
+
+        JPanel headerBar = new JPanel(new BorderLayout());
+        headerBar.setBackground(PANEL_ALT);
+        headerBar.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createMatteBorder(1, 0, 0, 0, BORDER),
+                BorderFactory.createEmptyBorder(4, 12, 4, 8)
+        ));
+        headerBar.add(titleLabel, BorderLayout.WEST);
+        headerBar.add(hideButton, BorderLayout.EAST);
+
+        consolePanel.add(headerBar, BorderLayout.NORTH);
+        consolePanel.add(logScroll, BorderLayout.CENTER);
+
+        // Track console visibility
+        final boolean[] isVisible = {true};
+        final int[] lastHeight = {150};
+
+        // Hide/show functionality
+        hideButton.addActionListener(e -> {
+            if (isVisible[0]) {
+                // Hide console - store current height then collapse
+                lastHeight[0] = logScroll.getPreferredSize().height;
+                logScroll.setVisible(false);
+                logScroll.setPreferredSize(new Dimension(-1, 0));
+                hideButton.setText("▲");
+                isVisible[0] = false;
+            } else {
+                // Show console - restore height
+                logScroll.setVisible(true);
+                logScroll.setPreferredSize(new Dimension(-1, lastHeight[0]));
+                hideButton.setText("▼");
+                isVisible[0] = true;
+            }
+            consolePanel.revalidate();
+            consolePanel.repaint();
+            // Notify parent to relayout
+            SwingUtilities.invokeLater(() -> {
+                Container parent = consolePanel.getParent();
+                while (parent != null) {
+                    parent.validate();
+                    parent = parent.getParent();
+                }
+            });
+        });
+
+        // Add resize functionality with a proper split pane
+        JSplitPane splitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT);
+        splitPane.setBorder(null);
+        splitPane.setBackground(BG);
+        splitPane.setDividerSize(8);
+        splitPane.setResizeWeight(1.0); // Top gets all extra space
+        splitPane.setContinuousLayout(true);
+
+        // We'll add the console panel as the bottom component later
+        // The top component will be set by buildUi()
+
+        container.add(splitPane, BorderLayout.CENTER);
+
+        // Store reference for later use
+        bottomSplitPane = splitPane;
+        bottomConsolePanel = consolePanel;
+
         return container;
     }
 
@@ -822,7 +1089,7 @@ public class ItemEditorApp {
 
         scriptList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting() && !suppressSelectionLoad) {
-                loadSelectedItem();
+                queueSelectedItemLoad();
             }
         });
 
@@ -846,6 +1113,45 @@ public class ItemEditorApp {
         itemParamAddButton.addActionListener(e -> addItemParam());
         itemParamRemoveButton.addActionListener(e -> removeSelectedItemParam());
         itemParamApplyTextButton.addActionListener(e -> applyItemParamText());
+        groundOptionEditButton.addActionListener(e -> editSelectedOption(true));
+        groundOptionRemoveButton.addActionListener(e -> clearSelectedOption(true));
+        groundOptionPresetButton.addActionListener(e -> showOptionPresetMenu(true, groundOptionPresetButton));
+        groundOptionCustomApplyButton.addActionListener(e -> applyCustomOptionValue(true));
+        groundOptionCustomField.addActionListener(e -> applyCustomOptionValue(true));
+        inventoryOptionEditButton.addActionListener(e -> editSelectedOption(false));
+        inventoryOptionRemoveButton.addActionListener(e -> clearSelectedOption(false));
+        inventoryOptionPresetButton.addActionListener(e -> showOptionPresetMenu(false, inventoryOptionPresetButton));
+        inventoryOptionCustomApplyButton.addActionListener(e -> applyCustomOptionValue(false));
+        inventoryOptionCustomField.addActionListener(e -> applyCustomOptionValue(false));
+        itemParamList.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mousePressed(java.awt.event.MouseEvent e) {
+                selectItemParamAt(e.getPoint());
+                maybeShowItemParamPopup(e);
+            }
+
+            @Override
+            public void mouseReleased(java.awt.event.MouseEvent e) {
+                maybeShowItemParamPopup(e);
+            }
+
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (SwingUtilities.isLeftMouseButton(e) && e.getClickCount() == 2) {
+                    selectItemParamAt(e.getPoint());
+                    editSelectedItemParam();
+                }
+            }
+
+    private void maybeShowItemParamPopup(java.awt.event.MouseEvent e) {
+        if (e.isPopupTrigger()) {
+            selectItemParamAt(e.getPoint());
+            if (itemParamList.getSelectedIndex() >= 0) {
+                createItemParamPopupMenu().show(itemParamList, e.getX(), e.getY());
+                    }
+                }
+            }
+        });
         itemRecolorList.addListSelectionListener(e -> {
             if (!e.getValueIsAdjusting()) {
                 refreshRecolorEditor();
@@ -854,7 +1160,18 @@ public class ItemEditorApp {
                 itemPreviewPanel.queueRenderNow();
             }
         });
+        itemFaceTextureList.addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) {
+                SwingUtilities.invokeLater(() -> {
+                    selectedHighlightedFaceIndices = highlightedFaceIndicesFromSelection();
+                    itemPreviewPanel.invalidateRenderKey();
+                    itemPreviewPanel.queueRenderNow();
+                    refreshTextureEditor();
+                });
+            }
+        });
         final int[] lastClickedRecolorIndex = {-1};
+        final int[] lastClickedFaceIndex = {-1};
         itemRecolorList.addMouseListener(new java.awt.event.MouseAdapter() {
             @Override
             public void mouseClicked(java.awt.event.MouseEvent e) {
@@ -872,10 +1189,36 @@ public class ItemEditorApp {
                 lastClickedRecolorIndex[0] = index;
             }
         });
+        itemFaceTextureList.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                int index = itemFaceTextureList.locationToIndex(e.getPoint());
+                Rectangle bounds = index >= 0 ? itemFaceTextureList.getCellBounds(index, index) : null;
+                if (bounds == null || !bounds.contains(e.getPoint())) {
+                    lastClickedFaceIndex[0] = -1;
+                    return;
+                }
+                if (!e.isControlDown() && !e.isShiftDown() && itemFaceTextureList.isSelectedIndex(index) && lastClickedFaceIndex[0] == index) {
+                    SwingUtilities.invokeLater(itemFaceTextureList::clearSelection);
+                    lastClickedFaceIndex[0] = -1;
+                    return;
+                }
+                lastClickedFaceIndex[0] = index;
+            }
+        });
+        installOptionListActions(groundOptionList, true);
+        installOptionListActions(inventoryOptionList, false);
         javax.swing.event.ChangeListener recolorListener = e -> applySelectedRecolor();
         recolorHueSlider.addChangeListener(recolorListener);
         recolorSaturationSlider.addChangeListener(recolorListener);
         recolorLightnessSlider.addChangeListener(recolorListener);
+        recolorNewPackedValueField.addActionListener(e -> applyPackedRecolorField());
+        recolorNewPackedValueField.addFocusListener(new java.awt.event.FocusAdapter() {
+            @Override
+            public void focusLost(java.awt.event.FocusEvent e) {
+                applyPackedRecolorField();
+            }
+        });
 
         DocumentListener wearOffsetPreviewListener = new DocumentListener() {
             @Override
@@ -905,6 +1248,28 @@ public class ItemEditorApp {
         itemFemaleWearOffsetXField.getDocument().addDocumentListener(wearOffsetPreviewListener);
         itemFemaleWearOffsetYField.getDocument().addDocumentListener(wearOffsetPreviewListener);
         itemFemaleWearOffsetZField.getDocument().addDocumentListener(wearOffsetPreviewListener);
+
+        itemEquipSlotCombo.addActionListener(e -> {
+            if (!suppressPreviewUpdates) refreshPreviewAfterFieldEdit();
+        });
+        itemEquipTypeCombo.addActionListener(e -> {
+            if (!suppressPreviewUpdates) refreshPreviewAfterFieldEdit();
+        });
+        itemModelIdField.getDocument().addDocumentListener(new DocumentListener() {
+            @Override public void insertUpdate(DocumentEvent e) { if (!suppressPreviewUpdates) refreshPreviewAfterFieldEdit(); }
+            @Override public void removeUpdate(DocumentEvent e) { if (!suppressPreviewUpdates) refreshPreviewAfterFieldEdit(); }
+            @Override public void changedUpdate(DocumentEvent e) { if (!suppressPreviewUpdates) refreshPreviewAfterFieldEdit(); }
+        });
+    }
+
+    private void refreshPreviewAfterFieldEdit() {
+        if (currentItemId == null || itemPreviewPanel.item == null) return;
+        ItemDefinitionRecord updated = buildPackedItemRecord();
+        if (updated == null) return;
+        suppressPreviewUpdates = true;
+        itemPreviewPanel.item = updated;
+        suppressPreviewUpdates = false;
+        itemPreviewPanel.queueRenderNow();
     }
 
     private void loadCache() {
@@ -952,6 +1317,7 @@ public class ItemEditorApp {
                 rememberRecentCachePath(itemService.getCachePath().toString());
                 itemModelRenderer = itemService == null ? null : new ItemModelRenderer(itemService);
                 itemPreviewPanel.setRenderer(itemModelRenderer);
+                refreshTextureBrowser();
                 appendLog("Loaded cache: " + itemService.getCachePath());
                 rebuildCurrentList();
                 refreshCurrentSelection();
@@ -1044,6 +1410,7 @@ public class ItemEditorApp {
     }
 
     private void loadSelectedItem() {
+        selectionDebounceTimer.stop();
         if (activeItemSelectionWorker != null && !activeItemSelectionWorker.isDone()) {
             activeItemSelectionWorker.cancel(true);
         }
@@ -1058,7 +1425,6 @@ public class ItemEditorApp {
         }
 
         int requestId = ++selectionRequestId;
-        appendLog("[item " + selected.id() + "] selection start");
         clearItemDetails();
         itemDetailsArea.setText("// loading item " + selected.id() + "...\n");
         itemPreviewPanel.clear();
@@ -1070,18 +1436,7 @@ public class ItemEditorApp {
                 if (isCancelled()) {
                     return null;
                 }
-                long startedAt = System.nanoTime();
-                appendLog("[item " + selected.id() + "] worker load start");
-                appendLog(itemService.debugDescribeItemLoad(selected.id()));
                 ItemDefinitionRecord item = itemService.load(selected.id());
-                appendLog("[item " + selected.id() + "] worker load done model=" + item.modelId()
-                        + " zoom=" + item.modelZoom()
-                        + " rot=" + item.modelRotation1() + "/" + item.modelRotation2() + "/" + item.modelRotation3()
-                        + " off=" + item.modelOffset1() + "/" + item.modelOffset2()
-                        + " scale=" + item.modelScaleX() + "/" + item.modelScaleY() + "/" + item.modelScaleZ()
-                        + " note=" + item.certId() + "/" + item.certTemplateId()
-                        + " lend=" + item.lendId() + "/" + item.lendTemplateId()
-                        + " ms=" + ((System.nanoTime() - startedAt) / 1_000_000.0));
                 String info = itemService.getCachePath() + " | item " + selected.id() + " | " + item.name();
                 return new ItemSelectionResult(requestId, item, info);
             }
@@ -1099,10 +1454,8 @@ public class ItemEditorApp {
                     if (result.requestId() != selectionRequestId) {
                         return;
                     }
-                    appendLog("[item " + selected.id() + "] populate start");
                     populateItemDetails(result.item());
-                    appendLog("[item " + selected.id() + "] populate done");
-                    armEdtWatchdog("item " + selected.id() + " post-populate", 1500);
+                    appendLog(debugDescribeLoadedItem(result.item(), itemPreviewPanel.renderer));
                     statusLabel.setText(result.info());
                 } catch (Exception e) {
                     if (requestId != selectionRequestId) {
@@ -1138,6 +1491,13 @@ public class ItemEditorApp {
         }
     }
 
+    private void queueSelectedItemLoad() {
+        if (activeItemSelectionWorker != null && !activeItemSelectionWorker.isDone()) {
+            activeItemSelectionWorker.cancel(true);
+        }
+        selectionDebounceTimer.restart();
+    }
+
     private void setCacheLoadInProgress(boolean loading, String statusMessage) {
         cacheLoadInProgress = loading;
         cacheField.setEnabled(!loading);
@@ -1147,6 +1507,28 @@ public class ItemEditorApp {
             statusLabel.setText(statusMessage);
             appendLog(statusMessage);
         }
+    }
+
+    private static String debugDescribeLoadedItem(ItemDefinitionRecord item, ItemModelRenderer renderer) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("[item ").append(item.id()).append("] ").append(item.name())
+                .append("\n  inventory  model=").append(item.modelId())
+                .append(" zoom=").append(item.modelZoom())
+                .append(" rot=").append(item.modelRotation1()).append("/").append(item.modelRotation2()).append("/").append(item.modelRotation3())
+                .append(" off=").append(item.modelOffset1()).append("/").append(item.modelOffset2())
+                .append(" scale=").append(item.modelScaleX()).append("/").append(item.modelScaleY()).append("/").append(item.modelScaleZ())
+                .append("\n  worn       slot=").append(item.equipSlot())
+                .append(" male=").append(item.maleEquip1()).append("/").append(item.maleEquip2()).append("/").append(item.maleEquip3())
+                .append(" female=").append(item.femaleEquip1()).append("/").append(item.femaleEquip2()).append("/").append(item.femaleEquip3())
+                .append("\n  wearOffset male=").append(item.maleWearOffsetX()).append("/").append(item.maleWearOffsetY()).append("/").append(item.maleWearOffsetZ())
+                .append(" female=").append(item.femaleWearOffsetX()).append("/").append(item.femaleWearOffsetY()).append("/").append(item.femaleWearOffsetZ());
+        int[] equipModels = {item.maleEquip1(), item.maleEquip2(), item.maleEquip3()};
+        for (int modelId : equipModels) {
+            if (modelId > 0) {
+                sb.append("\n  ").append(renderer.debugDescribeModelStats(modelId));
+            }
+        }
+        return sb.toString();
     }
 
     private void appendLog(String message) {
@@ -1167,10 +1549,7 @@ public class ItemEditorApp {
 
     private void armEdtWatchdog(String label, long timeoutMs) {
         AtomicBoolean completed = new AtomicBoolean(false);
-        SwingUtilities.invokeLater(() -> {
-            completed.set(true);
-            appendLog("[watchdog] EDT responsive after " + label);
-        });
+        SwingUtilities.invokeLater(() -> completed.set(true));
         Thread watchdog = new Thread(() -> {
             try {
                 Thread.sleep(timeoutMs);
@@ -1532,6 +1911,60 @@ public class ItemEditorApp {
         return field;
     }
 
+    private JComboBox<String> createEquipSlotCombo() {
+        JComboBox<String> combo = new JComboBox<>(new String[]{
+            "None (-1)", "Head (0)", "Cape (1)", "Amulet (2)", "Weapon (3)",
+            "Body (4)", "Shield (5)", "Legs (7)", "Hands (9)", "Feet (10)",
+            "Ring (12)", "Aura (14)"
+        });
+        styleItemCombo(combo);
+        return combo;
+    }
+
+    private JComboBox<String> createEquipTypeCombo() {
+        JComboBox<String> combo = new JComboBox<>(new String[]{
+            "Default (0)", "Body (1)", "Sleeveless (2)", "Type 3 (3)", "Type 4 (4)",
+            "2H Weapon (5)", "Platebody (6)", "Type 7 (7)", "Full Helm (8)", "Type 9 (9)"
+        });
+        styleItemCombo(combo);
+        return combo;
+    }
+
+    private void styleItemCombo(JComboBox<String> combo) {
+        combo.setBackground(INPUT_BG);
+        combo.setForeground(TEXT);
+        combo.putClientProperty(FlatClientProperties.STYLE,
+                "arc:12;" +
+                "focusWidth:1;" +
+                "innerFocusWidth:0;" +
+                "borderWidth:1;" +
+                "padding:6,8,6,8");
+    }
+
+    private static void setComboValue(JComboBox<String> combo, int value) {
+        String suffix = "(" + value + ")";
+        for (int i = 0; i < combo.getItemCount(); i++) {
+            if (combo.getItemAt(i).endsWith(suffix)) {
+                combo.setSelectedIndex(i);
+                return;
+            }
+        }
+        combo.setSelectedIndex(0);
+    }
+
+    private static int comboIntValue(JComboBox<String> combo, int fallback) {
+        String selected = (String) combo.getSelectedItem();
+        if (selected == null) return fallback;
+        int start = selected.lastIndexOf('(');
+        int end = selected.lastIndexOf(')');
+        if (start < 0 || end < 0 || end <= start) return fallback;
+        try {
+            return Integer.parseInt(selected.substring(start + 1, end).trim());
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
+    }
+
     private JComponent createStepperField(JTextField field, int step) {
         JPanel panel = new JPanel(new BorderLayout(4, 0));
         panel.setOpaque(false);
@@ -1688,13 +2121,8 @@ public class ItemEditorApp {
         itemStackableBox.setSelected(item.stackable());
         itemMembersBox.setSelected(item.membersOnly());
         itemModelIdField.setText(String.valueOf(item.modelId()));
-        itemModelZoomField.setText(String.valueOf(item.modelZoom()));
-        itemRotationXField.setText(String.valueOf(item.modelRotation1()));
-        itemRotationYField.setText(String.valueOf(item.modelRotation2()));
-        itemOffsetXField.setText(String.valueOf(item.modelOffset1()));
-        itemOffsetYField.setText(String.valueOf(item.modelOffset2()));
-        itemEquipSlotField.setText(String.valueOf(item.equipSlot()));
-        itemEquipTypeField.setText(String.valueOf(item.equipType()));
+        setComboValue(itemEquipSlotCombo, item.equipSlot());
+        setComboValue(itemEquipTypeCombo, item.equipType());
         itemMaleEquipField.setText(joinInts(item.maleEquip1(), item.maleEquip2()));
         itemFemaleEquipField.setText(joinInts(item.femaleEquip1(), item.femaleEquip2()));
         itemMaleWearOffsetXField.setText(String.valueOf(item.maleWearOffsetX()));
@@ -1706,30 +2134,27 @@ public class ItemEditorApp {
         itemCertField.setText(joinInts(item.certId(), item.certTemplateId()));
         itemLendField.setText(joinInts(item.lendId(), item.lendTemplateId()));
         itemTeamField.setText(String.valueOf(item.teamId()));
-        itemGroundOptionsArea.setText(joinLines(item.groundOptions()));
-        itemInventoryOptionsArea.setText(joinLines(item.inventoryOptions()));
+        loadOptionList(groundOptionListModel, item.groundOptions());
+        loadOptionList(inventoryOptionListModel, item.inventoryOptions());
+        groundOptionCustomField.setText("");
+        inventoryOptionCustomField.setText("");
         currentItemParams = new LinkedHashMap<>(new TreeMap<>(item.clientScriptData()));
         currentOriginalModelColors = new int[0];
         currentModifiedModelColors = new int[0];
         selectedHighlightedOriginalColors = new int[0];
         itemTextureArea.setText(joinPairs(item.originalTextureColors(), item.modifiedTextureColors()));
+        refreshFaceTextureList(item);
         refreshRecolorList(item, -1);
         refreshItemParamsView();
         itemPreviewPanel.setItemSilently(item);
         suppressPreviewUpdates = true;
         applyPreviewDefaultsForMode((ItemPreviewMode) itemPreviewModeCombo.getSelectedItem(), item);
         suppressPreviewUpdates = false;
-        appendLog("[item " + item.id() + "] preview kickoff queued");
         SwingUtilities.invokeLater(() -> {
             if (currentItemId != null && currentItemId == item.id()) {
-                appendLog("[item " + item.id() + "] preview kickoff run");
                 pushPreviewOverrides();
-            } else {
-                appendLog("[item " + item.id() + "] preview kickoff skipped current=" + currentItemId);
             }
         });
-        itemGroundOptionsArea.setCaretPosition(0);
-        itemInventoryOptionsArea.setCaretPosition(0);
         itemTextureArea.setCaretPosition(0);
     }
 
@@ -1740,13 +2165,8 @@ public class ItemEditorApp {
         itemStackableBox.setSelected(false);
         itemMembersBox.setSelected(false);
         itemModelIdField.setText("");
-        itemModelZoomField.setText("");
-        itemRotationXField.setText("");
-        itemRotationYField.setText("");
-        itemOffsetXField.setText("");
-        itemOffsetYField.setText("");
-        itemEquipSlotField.setText("");
-        itemEquipTypeField.setText("");
+        itemEquipSlotCombo.setSelectedIndex(0);
+        itemEquipTypeCombo.setSelectedIndex(0);
         itemMaleEquipField.setText("");
         itemFemaleEquipField.setText("");
         itemMaleWearOffsetXField.setText("");
@@ -1758,16 +2178,22 @@ public class ItemEditorApp {
         itemCertField.setText("");
         itemLendField.setText("");
         itemTeamField.setText("");
-        itemGroundOptionsArea.setText("");
-        itemInventoryOptionsArea.setText("");
+        loadOptionList(groundOptionListModel, null);
+        loadOptionList(inventoryOptionListModel, null);
+        groundOptionCustomField.setText("");
+        inventoryOptionCustomField.setText("");
         itemTextureArea.setText("");
         itemDetailsArea.setText("");
         itemParamListModel.clear();
         itemRecolorListModel.clear();
         currentOriginalModelColors = new int[0];
         currentModifiedModelColors = new int[0];
+        currentOriginalFaceTextures = new short[0];
+        currentModifiedFaceTextures = new short[0];
+        textureClearButton.setEnabled(false);
         selectedHighlightedOriginalColors = new int[0];
         refreshRecolorEditor();
+        itemFaceTextureListModel.clear();
         currentItemParams = new LinkedHashMap<>();
         suppressPreviewUpdates = true;
         itemPreviewZoomSlider.setValue(2000);
@@ -1781,6 +2207,10 @@ public class ItemEditorApp {
     }
 
     private void pushPreviewOverrides() {
+        pushPreviewOverrides(true, true);
+    }
+
+    private void pushPreviewOverrides(boolean immediate, boolean logValues) {
         ItemDefinitionRecord current = itemPreviewPanel.item;
         boolean inventoryMode = itemPreviewModeCombo.getSelectedItem() == ItemPreviewMode.INVENTORY;
         int zoomOverride = inventoryMode ? itemPreviewZoomSlider.getValue() : itemPreviewZoomSlider.getValue();
@@ -1799,12 +2229,6 @@ public class ItemEditorApp {
         int offsetYOverride = inventoryMode
                 ? current == null ? itemPreviewOffsetYSlider.getValue() : itemPreviewOffsetYSlider.getValue() - current.modelOffset2()
                 : itemPreviewOffsetYSlider.getValue();
-        if (current != null) {
-            appendLog("[item " + current.id() + "] preview values zoom=" + itemPreviewZoomSlider.getValue()
-                    + " rot=" + itemPreviewRotationXSlider.getValue() + "/" + itemPreviewRotationYSlider.getValue() + "/" + itemPreviewRotationZSlider.getValue()
-                    + " delta=" + rotationXOverride + "/" + rotationYOverride + "/" + rotationZOverride
-                    + " off=" + itemPreviewOffsetXSlider.getValue() + "/" + itemPreviewOffsetYSlider.getValue());
-        }
         updatePreviewValueLabels();
         itemPreviewPanel.setOverrides(
                 zoomOverride,
@@ -1812,7 +2236,8 @@ public class ItemEditorApp {
                 rotationYOverride,
                 rotationZOverride,
                 offsetXOverride,
-                offsetYOverride
+                offsetYOverride,
+                immediate
         );
     }
 
@@ -1999,18 +2424,21 @@ public class ItemEditorApp {
             refreshRecolorEditor();
             return;
         }
-        Map<Integer, Integer> existingRecolors = new LinkedHashMap<>();
+        Map<Integer, Integer> activeRecolors = new LinkedHashMap<>();
         int[] itemOriginalColors = item.originalModelColors() == null ? new int[0] : item.originalModelColors();
         int[] itemModifiedColors = item.modifiedModelColors() == null ? new int[0] : item.modifiedModelColors();
         for (int i = 0; i < Math.min(itemOriginalColors.length, itemModifiedColors.length); i++) {
-            existingRecolors.put(itemOriginalColors[i] & 0xFFFF, itemModifiedColors[i] & 0xFFFF);
+            activeRecolors.put(itemOriginalColors[i] & 0xFFFF, itemModifiedColors[i] & 0xFFFF);
+        }
+        for (int i = 0; i < Math.min(currentOriginalModelColors.length, currentModifiedModelColors.length); i++) {
+            activeRecolors.put(currentOriginalModelColors[i] & 0xFFFF, currentModifiedModelColors[i] & 0xFFFF);
         }
         Map<Integer, Integer> counts = new LinkedHashMap<>();
         ItemPreviewMode mode = (ItemPreviewMode) itemPreviewModeCombo.getSelectedItem();
         List<ItemModelRenderer.ModelColorInfo> modelColors = switch (mode == null ? ItemPreviewMode.INVENTORY : mode) {
             case INVENTORY -> itemModelRenderer.listModelColors(item.modelId());
-            case MALE -> itemModelRenderer.listWornModelColors(item, false, currentOriginalModelColors, currentModifiedModelColors);
-            case FEMALE -> itemModelRenderer.listWornModelColors(item, true, currentOriginalModelColors, currentModifiedModelColors);
+            case MALE -> itemModelRenderer.listWornModelColors(item, false, new int[0], new int[0]);
+            case FEMALE -> itemModelRenderer.listWornModelColors(item, true, new int[0], new int[0]);
         };
         currentOriginalModelColors = new int[modelColors.size()];
         currentModifiedModelColors = new int[modelColors.size()];
@@ -2019,7 +2447,7 @@ public class ItemEditorApp {
         }
         for (int i = 0; i < modelColors.size(); i++) {
             int original = modelColors.get(i).color() & 0xFFFF;
-            int modified = existingRecolors.getOrDefault(original, original);
+            int modified = activeRecolors.getOrDefault(original, original);
             currentOriginalModelColors[i] = original;
             currentModifiedModelColors[i] = modified;
             itemRecolorListModel.addElement(new RecolorEntry(i, original, modified, counts.getOrDefault(original, 0)));
@@ -2041,6 +2469,170 @@ public class ItemEditorApp {
         refreshRecolorEditor();
     }
 
+    private void refreshFaceTextureList(ItemDefinitionRecord item) {
+        itemFaceTextureListModel.clear();
+        currentOriginalFaceTextures = new short[0];
+        currentModifiedFaceTextures = new short[0];
+        selectedHighlightedFaceIndices = new int[0];
+        textureClearButton.setEnabled(false);
+        setFaceTexturePaneVisible(true);
+        refreshTextureEditor();
+        if (itemModelRenderer == null || item == null || item.modelId() < 0) {
+            return;
+        }
+        List<ItemModelRenderer.ModelFaceInfo> faces = itemModelRenderer.listModelFaces(item.modelId());
+        currentOriginalFaceTextures = new short[faces.size()];
+        currentModifiedFaceTextures = new short[faces.size()];
+        for (int i = 0; i < faces.size(); i++) {
+            ItemModelRenderer.ModelFaceInfo face = faces.get(i);
+            short textureRef = (short) face.textureId();
+            currentOriginalFaceTextures[i] = textureRef;
+            currentModifiedFaceTextures[i] = textureRef;
+            itemFaceTextureListModel.addElement(new ModelFaceEntry(face.index(), face.color(), toDisplayTextureId(textureRef)));
+        }
+        textureClearButton.setEnabled(itemModelRenderer.canPatchModelFaceTextures(item.modelId()));
+        refreshTextureEditor();
+    }
+
+    private void setFaceTexturePaneVisible(boolean visible) {
+        SwingUtilities.invokeLater(() -> {
+            if (appearanceFacePanel != null) {
+                appearanceFacePanel.setVisible(visible);
+                appearanceFacePanel.revalidate();
+                appearanceFacePanel.repaint();
+            }
+        });
+    }
+
+    private void refreshTextureBrowser() {
+        texturePickerListModel.clear();
+        if (itemModelRenderer == null) {
+            return;
+        }
+        for (ItemModelRenderer.TextureThumbnailInfo texture : itemModelRenderer.listTextureThumbnails()) {
+            texturePickerListModel.addElement(new TextureThumbnailEntry(texture.id(), texture.image()));
+        }
+    }
+
+    private void refreshTextureEditor() {
+        ModelFaceEntry face = itemFaceTextureList.getSelectedValue();
+        BufferedImage preview = null;
+        if (face != null && face.textureId() >= 0 && itemModelRenderer != null) {
+            for (int i = 0; i < texturePickerListModel.size(); i++) {
+                TextureThumbnailEntry entry = texturePickerListModel.get(i);
+                if (entry.textureId() == face.textureId()) {
+                    preview = entry.image();
+                    break;
+                }
+            }
+        }
+        textureCurrentSwatch.removeAll();
+        textureCurrentSwatch.setLayout(new BorderLayout());
+        textureCurrentSwatch.setOpaque(true);
+        if (preview != null) {
+            textureCurrentSwatch.add(new JLabel(new ImageIcon(preview)), BorderLayout.CENTER);
+            textureCurrentSwatch.setBackground(INPUT_BG);
+        } else {
+            textureCurrentSwatch.setBackground(PANEL_ALT);
+        }
+        textureCurrentSwatch.revalidate();
+        textureCurrentSwatch.repaint();
+    }
+
+    private void openTexturePicker() {
+        if (texturePickerListModel.isEmpty()) {
+            return;
+        }
+        JDialog dialog = new JDialog(frame, "Textures", true);
+        dialog.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        texturePickerList.clearSelection();
+        JScrollPane scrollPane = wrapScroll(texturePickerList);
+        scrollPane.setPreferredSize(new Dimension(620, 420));
+        dialog.getContentPane().add(scrollPane);
+        texturePickerList.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                if (e.getClickCount() == 2) {
+                    TextureThumbnailEntry texture = texturePickerList.getSelectedValue();
+                    if (texture != null) {
+                        applyTextureToSelectedFaces((short) texture.textureId());
+                        dialog.dispose();
+                    }
+                }
+            }
+        });
+        dialog.pack();
+        dialog.setLocationRelativeTo(frame);
+        dialog.setVisible(true);
+    }
+
+    private void applyTextureToSelectedFaces(short textureId) {
+        List<ModelFaceEntry> faces = itemFaceTextureList.getSelectedValuesList();
+        if (faces.isEmpty()) {
+            return;
+        }
+        short textureRef = toStoredTextureRef(textureId);
+        for (ModelFaceEntry face : faces) {
+            if (face.faceIndex() < 0 || face.faceIndex() >= currentModifiedFaceTextures.length) {
+                continue;
+            }
+            currentModifiedFaceTextures[face.faceIndex()] = textureRef;
+            itemFaceTextureListModel.set(face.faceIndex(), new ModelFaceEntry(face.faceIndex(), face.color(), textureId));
+        }
+        refreshTextureEditor();
+        itemPreviewPanel.invalidateRenderKey();
+        itemPreviewPanel.queueRenderNow();
+    }
+
+    private void clearSelectedFaceTextures() {
+        List<ModelFaceEntry> faces = itemFaceTextureList.getSelectedValuesList();
+        if (faces.isEmpty()) {
+            return;
+        }
+        for (ModelFaceEntry face : faces) {
+            if (face.faceIndex() < 0 || face.faceIndex() >= currentModifiedFaceTextures.length) {
+                continue;
+            }
+            currentModifiedFaceTextures[face.faceIndex()] = -1;
+            itemFaceTextureListModel.set(face.faceIndex(), new ModelFaceEntry(face.faceIndex(), face.color(), (short) -1));
+        }
+        refreshTextureEditor();
+        itemPreviewPanel.invalidateRenderKey();
+        itemPreviewPanel.queueRenderNow();
+    }
+
+    private void selectPickedPreviewFace(ItemModelRenderer.PickResult picked) {
+        if (picked == null) {
+            return;
+        }
+        boolean sameSingleFace = itemFaceTextureList.getSelectedIndices().length == 1
+                && itemFaceTextureList.getSelectedIndex() == picked.faceIndex();
+        boolean sameSingleRecolor = false;
+        int matchedRecolorIndex = -1;
+        for (int i = 0; i < itemRecolorListModel.size(); i++) {
+            if (itemRecolorListModel.get(i).originalColor() == (picked.originalColor() & 0xFFFF)) {
+                matchedRecolorIndex = i;
+                break;
+            }
+        }
+        sameSingleRecolor = matchedRecolorIndex >= 0
+                && itemRecolorList.getSelectedIndices().length == 1
+                && itemRecolorList.getSelectedIndex() == matchedRecolorIndex;
+        if (sameSingleFace || sameSingleRecolor) {
+            itemFaceTextureList.clearSelection();
+            itemRecolorList.clearSelection();
+            return;
+        }
+        if (picked.faceIndex() >= 0 && picked.faceIndex() < itemFaceTextureListModel.size()) {
+            itemFaceTextureList.setSelectedIndex(picked.faceIndex());
+            itemFaceTextureList.ensureIndexIsVisible(picked.faceIndex());
+        }
+        if (matchedRecolorIndex >= 0) {
+            itemRecolorList.setSelectedIndex(matchedRecolorIndex);
+            itemRecolorList.ensureIndexIsVisible(matchedRecolorIndex);
+        }
+    }
+
     private void refreshRecolorEditor() {
         List<RecolorEntry> selectedEntries = itemRecolorList.getSelectedValuesList();
         RecolorEntry entry = selectedEntries.isEmpty() ? null : selectedEntries.get(0);
@@ -2049,16 +2641,19 @@ public class ItemEditorApp {
             recolorHueSlider.setValue(0);
             recolorSaturationSlider.setValue(0);
             recolorLightnessSlider.setValue(0);
-            recolorPackedValueField.setText("");
+            recolorDefaultPackedValueField.setText("");
+            recolorNewPackedValueField.setText("");
             recolorOriginalSwatch.setBackground(PANEL_ALT);
             recolorModifiedSwatch.setBackground(PANEL_ALT);
         } else {
+            int originalColor = entry.originalColor & 0xFFFF;
             int color = entry.modifiedColor & 0xFFFF;
             recolorHueSlider.setValue((color >> 10) & 0x3F);
             recolorSaturationSlider.setValue((color >> 7) & 0x07);
             recolorLightnessSlider.setValue(color & 0x7F);
-            recolorPackedValueField.setText(String.valueOf(color));
-            recolorOriginalSwatch.setBackground(jagexColorToAwt(entry.originalColor));
+            recolorDefaultPackedValueField.setText(String.valueOf(originalColor));
+            recolorNewPackedValueField.setText(String.valueOf(color));
+            recolorOriginalSwatch.setBackground(jagexColorToAwt(originalColor));
             recolorModifiedSwatch.setBackground(jagexColorToAwt(color));
         }
         suppressRecolorUpdates = false;
@@ -2080,7 +2675,7 @@ public class ItemEditorApp {
             currentModifiedModelColors[entry.index] = packed;
             itemRecolorListModel.set(entry.index, new RecolorEntry(entry.index, entry.originalColor, packed, entry.faceCount));
         }
-        recolorPackedValueField.setText(String.valueOf(packed));
+        recolorNewPackedValueField.setText(String.valueOf(packed));
         recolorModifiedSwatch.setBackground(jagexColorToAwt(packed));
         selectedHighlightedOriginalColors = new int[0];
         itemPreviewPanel.invalidateRenderKey();
@@ -2091,7 +2686,7 @@ public class ItemEditorApp {
         if (suppressRecolorUpdates) {
             return;
         }
-        String text = recolorPackedValueField.getText().trim();
+        String text = recolorNewPackedValueField.getText().trim();
         if (!isInteger(text)) {
             refreshRecolorEditor();
             return;
@@ -2136,6 +2731,18 @@ public class ItemEditorApp {
             return new int[0];
         }
         return selectedEntries.stream().mapToInt(RecolorEntry::originalColor).distinct().toArray();
+    }
+
+    private int[] highlightedFaceIndicesFromSelection() {
+        return itemFaceTextureList.getSelectedIndices();
+    }
+
+    private static short toDisplayTextureId(short textureRef) {
+        return textureRef <= 0 ? textureRef : (short) (textureRef - 1);
+    }
+
+    private static short toStoredTextureRef(short textureId) {
+        return textureId < 0 ? textureId : (short) (textureId + 1);
     }
 
     private static int packJagexColor(int hue, int saturation, int lightness) {
@@ -2209,6 +2816,18 @@ public class ItemEditorApp {
     }
 
     private void addItemParam() {
+        showItemParamDialog(null);
+    }
+
+    private void editSelectedItemParam() {
+        Integer key = getSelectedItemParamKey();
+        if (key == null) {
+            return;
+        }
+        showItemParamDialog(key);
+    }
+
+    private void showItemParamDialog(Integer editKey) {
         if (currentItemId == null) {
             return;
         }
@@ -2227,10 +2846,31 @@ public class ItemEditorApp {
         JComboBox<WeaponTypeOption> weaponTypeCombo = new JComboBox<>(WeaponTypeOption.values());
         styleCombo(weaponTypeCombo);
         weaponTypeCombo.setVisible(false);
-
-        ParamDefinition initial = (ParamDefinition) knownParams.getSelectedItem();
-        if (initial != null) {
-            idField.setText(String.valueOf(initial.id));
+        if (editKey != null) {
+            ParamDefinition existingDefinition = ParamDefinition.byId(editKey);
+            if (existingDefinition != null) {
+                knownParams.setSelectedItem(existingDefinition);
+            } else {
+                idField.setText(String.valueOf(editKey));
+            }
+            Object existingValue = currentItemParams.get(editKey);
+            if (existingValue instanceof String stringValue) {
+                typeCombo.setSelectedItem("string");
+                valueField.setText(stringValue);
+            } else {
+                typeCombo.setSelectedItem("int");
+                int intValue = existingValue instanceof Number number ? number.intValue() : 0;
+                valueField.setText(String.valueOf(intValue));
+                WeaponTypeOption weaponTypeOption = WeaponTypeOption.byId(intValue);
+                if (weaponTypeOption != null) {
+                    weaponTypeCombo.setSelectedItem(weaponTypeOption);
+                }
+            }
+        } else {
+            ParamDefinition initial = (ParamDefinition) knownParams.getSelectedItem();
+            if (initial != null) {
+                idField.setText(String.valueOf(initial.id));
+            }
         }
 
         Runnable updateKnownValueInput = () -> {
@@ -2287,7 +2927,7 @@ public class ItemEditorApp {
 
         updateKnownValueInput.run();
 
-        int result = JOptionPane.showConfirmDialog(frame, panel, "Add Item Param", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        int result = JOptionPane.showConfirmDialog(frame, panel, editKey == null ? "Add Item Param" : "Edit Item Param", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
         if (result != JOptionPane.OK_OPTION) {
             return;
         }
@@ -2295,6 +2935,9 @@ public class ItemEditorApp {
         try {
             int id = Integer.parseInt(idField.getText().trim());
             Object value = "string".equals(typeCombo.getSelectedItem()) ? valueField.getText() : Integer.parseInt(valueField.getText().trim());
+            if (editKey != null && editKey != id) {
+                currentItemParams.remove(editKey);
+            }
             currentItemParams.put(id, value);
             refreshItemParamsView();
         } catch (NumberFormatException ex) {
@@ -2303,17 +2946,201 @@ public class ItemEditorApp {
     }
 
     private void removeSelectedItemParam() {
+        Integer key = getSelectedItemParamKey();
+        if (key == null) {
+            return;
+        }
+        currentItemParams.remove(key);
+        refreshItemParamsView();
+    }
+
+    private void installOptionListActions(JList<OptionEntry> list, boolean ground) {
+        list.addMouseListener(new java.awt.event.MouseAdapter() {
+            @Override
+            public void mouseClicked(java.awt.event.MouseEvent e) {
+                int index = list.locationToIndex(e.getPoint());
+                Rectangle bounds = index >= 0 ? list.getCellBounds(index, index) : null;
+                if (bounds == null || !bounds.contains(e.getPoint())) {
+                    return;
+                }
+                if (e.getClickCount() == 2 && SwingUtilities.isLeftMouseButton(e)) {
+                    list.setSelectedIndex(index);
+                    editSelectedOption(ground);
+                }
+            }
+        });
+    }
+
+    private void editSelectedOption(boolean ground) {
+        showOptionDialog(ground, getSelectedOptionIndex(ground));
+    }
+
+    private void clearSelectedOption(boolean ground) {
+        Integer index = getSelectedOptionIndex(ground);
+        if (index == null) {
+            return;
+        }
+        setOptionValue(ground, index, null);
+    }
+
+    private Integer getSelectedOptionIndex(boolean ground) {
+        OptionEntry entry = (ground ? groundOptionList : inventoryOptionList).getSelectedValue();
+        return entry == null ? null : entry.slot();
+    }
+
+    private void showOptionPresetMenu(boolean ground, Component anchor) {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem customItem = new JMenuItem("Custom...");
+        customItem.addActionListener(e -> promptCustomOptionValue(ground));
+        menu.add(customItem);
+        menu.addSeparator();
+        for (String preset : ground ? DEFAULT_GROUND_OPTIONS : DEFAULT_INVENTORY_OPTIONS) {
+            JMenuItem item = new JMenuItem(preset);
+            item.addActionListener(e -> applyOptionPreset(ground, preset));
+            menu.add(item);
+        }
+        menu.show(anchor, 0, anchor.getHeight());
+    }
+
+    private void applyOptionPreset(boolean ground, String preset) {
+        Integer selectedIndex = getSelectedOptionIndex(ground);
+        int slot = selectedIndex != null ? selectedIndex : firstEmptyOptionSlot(ground);
+        setOptionValue(ground, slot, preset);
+        (ground ? groundOptionList : inventoryOptionList).setSelectedIndex(slot);
+        (ground ? groundOptionCustomField : inventoryOptionCustomField).setText(preset);
+    }
+
+    private void promptCustomOptionValue(boolean ground) {
+        Integer selectedIndex = getSelectedOptionIndex(ground);
+        int slot = selectedIndex != null ? selectedIndex : firstEmptyOptionSlot(ground);
+        String current = optionValuesFromList(ground)[slot];
+        String value = JOptionPane.showInputDialog(
+                frame,
+                (ground ? "Ground" : "Inventory") + " option value:",
+                current == null ? "" : current
+        );
+        if (value == null) {
+            return;
+        }
+        value = value.trim();
+        setOptionValue(ground, slot, value.isBlank() ? null : value);
+        (ground ? groundOptionList : inventoryOptionList).setSelectedIndex(slot);
+        (ground ? groundOptionCustomField : inventoryOptionCustomField).setText(value);
+    }
+
+    private void applyCustomOptionValue(boolean ground) {
+        JTextField field = ground ? groundOptionCustomField : inventoryOptionCustomField;
+        Integer selectedIndex = getSelectedOptionIndex(ground);
+        int slot = selectedIndex != null ? selectedIndex : firstEmptyOptionSlot(ground);
+        String value = field.getText();
+        value = value == null ? null : value.trim();
+        setOptionValue(ground, slot, value == null || value.isBlank() ? null : value);
+        (ground ? groundOptionList : inventoryOptionList).setSelectedIndex(slot);
+    }
+
+    private int firstEmptyOptionSlot(boolean ground) {
+        DefaultListModel<OptionEntry> model = ground ? groundOptionListModel : inventoryOptionListModel;
+        for (int i = 0; i < model.size(); i++) {
+            if (model.get(i).value() == null || model.get(i).value().isBlank()) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    private void showOptionDialog(boolean ground, Integer editSlot) {
+        if (currentItemId == null) {
+            return;
+        }
+        JPanel panel = new JPanel(new GridBagLayout());
+        panel.setBackground(PANEL);
+        JComboBox<OptionSlot> slotCombo = new JComboBox<>(OptionSlot.values());
+        styleCombo(slotCombo);
+        JComboBox<String> valueCombo = new JComboBox<>(ground ? DEFAULT_GROUND_OPTIONS : DEFAULT_INVENTORY_OPTIONS);
+        valueCombo.setEditable(true);
+        styleCombo(valueCombo);
+        if (editSlot != null && editSlot >= 0 && editSlot < OptionSlot.values().length) {
+            slotCombo.setSelectedIndex(editSlot);
+            String current = optionValuesFromList(ground)[editSlot];
+            valueCombo.setSelectedItem(current == null ? "" : current);
+        }
+        GridBagConstraints c = new GridBagConstraints();
+        c.insets = new Insets(4, 4, 4, 4);
+        c.fill = GridBagConstraints.HORIZONTAL;
+        c.gridx = 0;
+        c.gridy = 0;
+        panel.add(createLabel("Slot", true), c);
+        c.gridx = 1;
+        panel.add(slotCombo, c);
+        c.gridx = 0;
+        c.gridy = 1;
+        panel.add(createLabel("Value", true), c);
+        c.gridx = 1;
+        panel.add(valueCombo, c);
+        int result = JOptionPane.showConfirmDialog(frame, panel, (ground ? "Ground" : "Inventory") + " Option", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+        if (result != JOptionPane.OK_OPTION) {
+            return;
+        }
+        Object selected = valueCombo.getEditor().getItem();
+        String value = selected == null ? null : selected.toString().trim();
+        setOptionValue(ground, ((OptionSlot) slotCombo.getSelectedItem()).slot, value == null || value.isBlank() ? null : value);
+    }
+
+    private void setOptionValue(boolean ground, int slot, String value) {
+        if (slot < 0 || slot >= 5) {
+            return;
+        }
+        DefaultListModel<OptionEntry> model = ground ? groundOptionListModel : inventoryOptionListModel;
+        model.set(slot, new OptionEntry(slot, value));
+    }
+
+    private String[] optionValuesFromList(boolean ground) {
+        DefaultListModel<OptionEntry> model = ground ? groundOptionListModel : inventoryOptionListModel;
+        String[] values = new String[5];
+        for (int i = 0; i < Math.min(5, model.size()); i++) {
+            values[i] = model.get(i).value();
+        }
+        return values;
+    }
+
+    private void loadOptionList(DefaultListModel<OptionEntry> model, String[] values) {
+        model.clear();
+        for (int i = 0; i < 5; i++) {
+            model.addElement(new OptionEntry(i, values != null && i < values.length ? values[i] : null));
+        }
+    }
+
+    private Integer getSelectedItemParamKey() {
         String selected = itemParamList.getSelectedValue();
         if (selected == null) {
-            return;
+            return null;
         }
         int separator = selected.indexOf(" | ");
         if (separator <= 0) {
-            return;
+            return null;
         }
-        int key = Integer.parseInt(selected.substring(0, separator));
-        currentItemParams.remove(key);
-        refreshItemParamsView();
+        return Integer.parseInt(selected.substring(0, separator));
+    }
+
+    private void selectItemParamAt(Point point) {
+        int index = itemParamList.locationToIndex(point);
+        Rectangle bounds = index >= 0 ? itemParamList.getCellBounds(index, index) : null;
+        if (bounds != null && bounds.contains(point)) {
+            itemParamList.setSelectedIndex(index);
+        } else {
+            itemParamList.clearSelection();
+        }
+    }
+
+    private JPopupMenu createItemParamPopupMenu() {
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem editItem = new JMenuItem("Edit");
+        JMenuItem deleteItem = new JMenuItem("Delete");
+        editItem.addActionListener(e -> editSelectedItemParam());
+        deleteItem.addActionListener(e -> removeSelectedItemParam());
+        menu.add(editItem);
+        menu.add(deleteItem);
+        return menu;
     }
 
     private void applyItemParamText() {
@@ -2336,6 +3163,167 @@ public class ItemEditorApp {
         currentItemParams.clear();
         currentItemParams.putAll(new TreeMap<>(parsed));
         refreshItemParamsView();
+    }
+
+    private void packCurrentItem() {
+        if (itemService == null || currentItemId == null || itemPreviewPanel.item == null) {
+            JOptionPane.showMessageDialog(frame, "Load a cache and select an item first.", "Nothing To Pack", JOptionPane.ERROR_MESSAGE);
+            return;
+        }
+
+        try {
+            applyItemParamText();
+            saveCurrentModelFaceTextures();
+            ItemDefinitionRecord packed = buildPackedItemRecord();
+            itemService.save(packed);
+            appendLog("Packed item " + packed.id() + " to cache.");
+
+            ItemDefinitionRecord reloaded = itemService.load(packed.id());
+            populateItemDetails(reloaded);
+            statusLabel.setText("Packed item " + packed.id());
+        } catch (Exception ex) {
+            appendLog("Failed to pack item: " + ex.getMessage());
+            JOptionPane.showMessageDialog(frame, ex.getMessage(), "Pack Failed", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void saveCurrentModelFaceTextures() {
+        ItemDefinitionRecord current = itemPreviewPanel.item;
+        if (current == null || itemModelRenderer == null || current.modelId() < 0 || currentOriginalFaceTextures.length == 0) {
+            return;
+        }
+        if (currentOriginalFaceTextures.length != currentModifiedFaceTextures.length || Arrays.equals(currentOriginalFaceTextures, currentModifiedFaceTextures)) {
+            return;
+        }
+        itemModelRenderer.saveModelFaceTextures(current.modelId(), Arrays.copyOf(currentModifiedFaceTextures, currentModifiedFaceTextures.length));
+        currentOriginalFaceTextures = Arrays.copyOf(currentModifiedFaceTextures, currentModifiedFaceTextures.length);
+        appendLog("Saved face textures for model " + current.modelId() + ".");
+    }
+
+    private ItemDefinitionRecord buildPackedItemRecord() {
+        ItemDefinitionRecord current = itemPreviewPanel.item;
+        if (current == null) {
+            throw new IllegalStateException("No item selected.");
+        }
+
+        int[] maleEquip = parseSlashPair(itemMaleEquipField.getText(), current.maleEquip1(), current.maleEquip2());
+        int[] femaleEquip = parseSlashPair(itemFemaleEquipField.getText(), current.femaleEquip1(), current.femaleEquip2());
+        int[] cert = parseSlashPair(itemCertField.getText(), current.certId(), current.certTemplateId());
+        int[] lend = parseSlashPair(itemLendField.getText(), current.lendId(), current.lendTemplateId());
+        String[] groundOptions = optionValuesFromList(true);
+        String[] inventoryOptions = optionValuesFromList(false);
+        short[][] texturePairs = parseTexturePairs(itemTextureArea.getText(), current.originalTextureColors(), current.modifiedTextureColors());
+
+        return new ItemDefinitionRecord(
+                current.id(),
+                itemNameField.getText().trim(),
+                parseIntOrDefault(itemModelIdField.getText(), current.modelId()),
+                current.modelZoom(),
+                current.modelRotation1(),
+                current.modelRotation2(),
+                current.modelRotation3(),
+                current.modelOffset1(),
+                current.modelOffset2(),
+                current.modelScaleX(),
+                current.modelScaleY(),
+                current.modelScaleZ(),
+                itemStackableBox.isSelected(),
+                parseIntOrDefault(itemPriceField.getText(), current.price()),
+                itemMembersBox.isSelected(),
+                comboIntValue(itemEquipSlotCombo, current.equipSlot()),
+                comboIntValue(itemEquipTypeCombo, current.equipType()),
+                maleEquip[0],
+                maleEquip[1],
+                current.maleEquip3(),
+                femaleEquip[0],
+                femaleEquip[1],
+                current.femaleEquip3(),
+                parseIntOrDefault(itemMaleWearOffsetXField.getText(), current.maleWearOffsetX()),
+                parseIntOrDefault(itemMaleWearOffsetYField.getText(), current.maleWearOffsetY()),
+                parseIntOrDefault(itemMaleWearOffsetZField.getText(), current.maleWearOffsetZ()),
+                parseIntOrDefault(itemFemaleWearOffsetXField.getText(), current.femaleWearOffsetX()),
+                parseIntOrDefault(itemFemaleWearOffsetYField.getText(), current.femaleWearOffsetY()),
+                parseIntOrDefault(itemFemaleWearOffsetZField.getText(), current.femaleWearOffsetZ()),
+                cert[0],
+                cert[1],
+                lend[0],
+                lend[1],
+                parseIntOrDefault(itemTeamField.getText(), current.teamId()),
+                groundOptions,
+                inventoryOptions,
+                Arrays.copyOf(currentOriginalModelColors, currentOriginalModelColors.length),
+                Arrays.copyOf(currentModifiedModelColors, currentModifiedModelColors.length),
+                texturePairs[0],
+                texturePairs[1],
+                new LinkedHashMap<>(new TreeMap<>(currentItemParams))
+        );
+    }
+
+    private int[] parseSlashPair(String text, int firstFallback, int secondFallback) {
+        if (text == null || text.isBlank()) {
+            return new int[]{firstFallback, secondFallback};
+        }
+        String[] parts = text.split("/");
+        int first = parts.length > 0 ? parseIntOrDefault(parts[0].trim(), firstFallback) : firstFallback;
+        int second = parts.length > 1 ? parseIntOrDefault(parts[1].trim(), secondFallback) : secondFallback;
+        return new int[]{first, second};
+    }
+
+    private String[] parseOptionLines(String text, String[] fallback) {
+        String[] values = fallback == null ? new String[]{null, null, null, null, null} : Arrays.copyOf(fallback, 5);
+        if (text == null || text.isBlank()) {
+            return values;
+        }
+        String[] lines = text.split("\\R");
+        for (String rawLine : lines) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            int separator = line.indexOf(':');
+            if (separator <= 0) {
+                continue;
+            }
+            int index = parseIntOrDefault(line.substring(0, separator).trim(), -1);
+            if (index < 0 || index >= values.length) {
+                continue;
+            }
+            String value = line.substring(separator + 1).trim();
+            values[index] = value.equals("-") || value.isBlank() ? null : value;
+        }
+        return values;
+    }
+
+    private short[][] parseTexturePairs(String text, short[] originalFallback, short[] modifiedFallback) {
+        if (text == null || text.isBlank() || text.trim().equals("-")) {
+            return new short[][]{
+                    originalFallback == null ? null : Arrays.copyOf(originalFallback, originalFallback.length),
+                    modifiedFallback == null ? null : Arrays.copyOf(modifiedFallback, modifiedFallback.length)
+            };
+        }
+
+        List<Short> original = new ArrayList<>();
+        List<Short> modified = new ArrayList<>();
+        String[] lines = text.split("\\R");
+        for (String rawLine : lines) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            String[] parts = line.split("->");
+            if (parts.length != 2) {
+                continue;
+            }
+            original.add((short) parseIntOrDefault(parts[0].trim(), 0));
+            modified.add((short) parseIntOrDefault(parts[1].trim(), 0));
+        }
+        short[] originalArray = new short[original.size()];
+        short[] modifiedArray = new short[modified.size()];
+        for (int i = 0; i < original.size(); i++) {
+            originalArray[i] = original.get(i);
+            modifiedArray[i] = modified.get(i);
+        }
+        return new short[][]{originalArray, modifiedArray};
     }
 
     private boolean isInteger(String value) {
@@ -2460,6 +3448,15 @@ public class ItemEditorApp {
             this.label = label;
         }
 
+        private static WeaponTypeOption byId(int id) {
+            for (WeaponTypeOption option : values()) {
+                if (option.id == id) {
+                    return option;
+                }
+            }
+            return null;
+        }
+
         @Override
         public String toString() {
             return id + " - " + label;
@@ -2541,6 +3538,46 @@ public class ItemEditorApp {
         }
     }
 
+    private record OptionEntry(int slot, String value) {
+        @Override
+        public String toString() {
+            return slot + ": " + (value == null || value.isBlank() ? "-" : value);
+        }
+    }
+
+    private enum OptionSlot {
+        SLOT_0(0),
+        SLOT_1(1),
+        SLOT_2(2),
+        SLOT_3(3),
+        SLOT_4(4);
+
+        private final int slot;
+
+        OptionSlot(int slot) {
+            this.slot = slot;
+        }
+
+        @Override
+        public String toString() {
+            return String.valueOf(slot);
+        }
+    }
+
+    private record ModelFaceEntry(int faceIndex, int color, short textureId) {
+        @Override
+        public String toString() {
+            return "#" + faceIndex + " color=" + color + " tex=" + textureId;
+        }
+    }
+
+    private record TextureThumbnailEntry(int textureId, BufferedImage image) {
+        @Override
+        public String toString() {
+            return String.valueOf(textureId);
+        }
+    }
+
     private static final class FastListModel extends AbstractListModel<Object> {
         private List<Object> items = List.of();
 
@@ -2565,6 +3602,21 @@ public class ItemEditorApp {
 
         private boolean isEmpty() {
             return items.isEmpty();
+        }
+    }
+
+    private static final class TextureThumbnailRenderer extends DefaultListCellRenderer {
+        @Override
+        public Component getListCellRendererComponent(JList<?> list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+            JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+            if (value instanceof TextureThumbnailEntry entry) {
+                label.setText(entry.toString());
+                label.setIcon(new ImageIcon(entry.image()));
+                label.setHorizontalTextPosition(SwingConstants.RIGHT);
+                label.setIconTextGap(8);
+                label.setBorder(BorderFactory.createEmptyBorder(4, 6, 4, 6));
+            }
+            return label;
         }
     }
 
@@ -2623,6 +3675,12 @@ public class ItemEditorApp {
                     queueRender();
                 }
             });
+            addMouseListener(new java.awt.event.MouseAdapter() {
+                @Override
+                public void mouseClicked(java.awt.event.MouseEvent e) {
+                    handlePreviewClick(e);
+                }
+            });
         }
 
         private void setRenderer(ItemModelRenderer renderer) {
@@ -2638,7 +3696,6 @@ public class ItemEditorApp {
         }
 
         private void setItemSilently(ItemDefinitionRecord item) {
-            appendLog("[item " + (item == null ? "null" : item.id()) + "] preview setItemSilently");
             cancelRenderWorker();
             renderRequestId++;
             this.item = item;
@@ -2692,7 +3749,7 @@ public class ItemEditorApp {
                 return;
             }
             double oldZoom = overlayZoomFactor;
-            double newZoom = Math.max(0.5, Math.min(4.0, overlayZoomFactor + (-wheelRotation * 0.1)));
+            double newZoom = Math.max(0.5, Math.min(10.0, overlayZoomFactor + (-wheelRotation * 0.1)));
             if (Math.abs(newZoom - oldZoom) < 0.0001) {
                 return;
             }
@@ -2726,17 +3783,27 @@ public class ItemEditorApp {
             repaint();
         }
 
-        private void setOverrides(int zoom, int rotationX, int rotationY, int rotationZ, int offsetX, int offsetY) {
-            appendLog("[item " + (item == null ? "null" : item.id()) + "] preview setOverrides zoom=" + zoom
-                    + " delta=" + rotationX + "/" + rotationY + "/" + rotationZ
-                    + " off=" + offsetX + "/" + offsetY);
+        private void setOverrides(int zoom, int rotationX, int rotationY, int rotationZ, int offsetX, int offsetY, boolean immediate) {
+            boolean changed = this.zoomOverride != zoom
+                    || this.rotationXOverride != rotationX
+                    || this.rotationYOverride != rotationY
+                    || this.rotationZOverride != rotationZ
+                    || this.offsetXOverride != offsetX
+                    || this.offsetYOverride != offsetY;
             this.zoomOverride = zoom;
             this.rotationXOverride = rotationX;
             this.rotationYOverride = rotationY;
             this.rotationZOverride = rotationZ;
             this.offsetXOverride = offsetX;
             this.offsetYOverride = offsetY;
-            queueRender();
+            if (changed) {
+                renderKey = null;
+            }
+            if (immediate) {
+                queueRenderNow();
+            } else {
+                queueRender();
+            }
             repaint();
         }
 
@@ -2760,6 +3827,54 @@ public class ItemEditorApp {
             this.activeOverlaySlider = null;
             this.middleRotateAnchor = null;
             repaint();
+        }
+
+        private void handlePreviewClick(java.awt.event.MouseEvent event) {
+            if (!SwingUtilities.isLeftMouseButton(event) || renderer == null || item == null || mode != ItemPreviewMode.INVENTORY || renderedImage == null) {
+                return;
+            }
+            Rectangle imageBounds = new Rectangle();
+            if (overlayOnly) {
+                if (overlayImageBounds.width <= 0 || overlayImageBounds.height <= 0) {
+                    return;
+                }
+                imageBounds = overlayImageBounds;
+            } else {
+                int w = getWidth();
+                int h = getHeight();
+                int slotWidth = 108;
+                int slotHeight = 110;
+                int slotX = 34;
+                int slotY = Math.max(44, (h - slotHeight) / 2 - 24);
+                int drawX = slotX + (slotWidth - renderedImage.getWidth()) / 2;
+                int drawY = slotY + Math.max(8, (slotHeight - renderedImage.getHeight()) / 2 - 10);
+                imageBounds = new Rectangle(drawX, drawY, renderedImage.getWidth(), renderedImage.getHeight());
+            }
+            if (!imageBounds.contains(event.getPoint())) {
+                return;
+            }
+            int imageX = event.getX() - imageBounds.x;
+            int imageY = event.getY() - imageBounds.y;
+            ItemModelRenderer.PickResult picked = renderer.pickInventoryFace(
+                    item,
+                    Arrays.copyOf(currentOriginalModelColors, currentOriginalModelColors.length),
+                    Arrays.copyOf(currentModifiedModelColors, currentModifiedModelColors.length),
+                    renderedImage.getWidth(),
+                    renderedImage.getHeight(),
+                    applyPreviewZoomBoost(zoomOverride),
+                    rotationXOverride,
+                    rotationYOverride,
+                    rotationZOverride,
+                    offsetXOverride,
+                    offsetYOverride,
+                    imageX,
+                    imageY,
+                    Arrays.copyOf(currentModifiedFaceTextures, currentModifiedFaceTextures.length)
+            );
+            if (picked == null) {
+                return;
+            }
+            selectPickedPreviewFace(picked);
         }
 
         private boolean beginOverlayInteraction(java.awt.event.MouseEvent event) {
@@ -2797,14 +3912,14 @@ public class ItemEditorApp {
             if (!overlayOnly || mode == ItemPreviewMode.INVENTORY) {
                 return false;
             }
-            if (activeOverlaySlider != null && SwingUtilities.isLeftMouseButton(event)) {
+            if (activeOverlaySlider != null) {
                 OverlayAxisControlLayout control = findOverlayAxisControl(activeOverlaySlider);
                 if (control != null) {
                     setOverlaySliderFromPoint(control, event.getPoint());
                     return true;
                 }
             }
-            if (middleRotateAnchor != null && SwingUtilities.isMiddleMouseButton(event)) {
+            if (middleRotateAnchor != null) {
                 int deltaX = event.getX() - middleRotateAnchor.x;
                 int deltaY = event.getY() - middleRotateAnchor.y;
                 itemPreviewRotationYSlider.setValue(clampPreviewSliderValue(itemPreviewRotationYSlider, middleRotateBaseRotationY - (deltaX * OVERLAY_ROTATE_SENSITIVITY)));
@@ -2914,6 +4029,8 @@ public class ItemEditorApp {
             final int[] renderOriginalColors = Arrays.copyOf(currentOriginalModelColors, currentOriginalModelColors.length);
             final int[] renderModifiedColors = Arrays.copyOf(currentModifiedModelColors, currentModifiedModelColors.length);
             final int[] renderHighlightedOriginalColors = Arrays.copyOf(selectedHighlightedOriginalColors, selectedHighlightedOriginalColors.length);
+            final int[] renderHighlightedFaceIndices = Arrays.copyOf(selectedHighlightedFaceIndices, selectedHighlightedFaceIndices.length);
+            final short[] renderFaceTextureOverrides = Arrays.copyOf(currentModifiedFaceTextures, currentModifiedFaceTextures.length);
             PreviewRenderKey nextKey = new PreviewRenderKey(
                     renderItem.id(),
                     renderMode,
@@ -2936,6 +4053,8 @@ public class ItemEditorApp {
                     Arrays.hashCode(renderOriginalColors),
                     Arrays.hashCode(renderModifiedColors),
                     Arrays.hashCode(renderHighlightedOriginalColors),
+                    Arrays.hashCode(renderHighlightedFaceIndices),
+                    Arrays.hashCode(renderFaceTextureOverrides),
                     animationFrame,
                     renderTargetWidth,
                     renderTargetHeight
@@ -2954,21 +4073,18 @@ public class ItemEditorApp {
                 loadingAnimationTimer.stop();
             }
             repaint();
-            appendLog("[item " + renderItem.id() + "] preview queue mode=" + renderMode + " model=" + renderItem.modelId() + " target=" + renderTargetWidth + "x" + renderTargetHeight
-                    + " zoom=" + renderZoomOverride + " rot=" + renderRotationXOverride + "/" + renderRotationYOverride + "/" + renderRotationZOverride
-                    + " off=" + renderOffsetXOverride + "/" + renderOffsetYOverride);
             int requestId = ++renderRequestId;
             final int workerItemId = renderItem.id();
             SwingWorker<PreviewRenderResult, Void> worker = new SwingWorker<>() {
                 @Override
                 protected PreviewRenderResult doInBackground() {
+                    Thread.interrupted(); // clear any stale interrupt flag from a previous cancel(true)
                     try {
                         if (isCancelled()) {
                             return new PreviewRenderResult(null, "preview render cancelled");
                         }
-                        appendLog("[item " + renderItem.id() + "] preview worker start");
                         BufferedImage image = switch (renderMode) {
-                            case INVENTORY -> renderer.renderInventory(renderItem, renderOriginalColors, renderModifiedColors, renderTargetWidth, renderTargetHeight, applyPreviewZoomBoost(renderZoomOverride), renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderHighlightedOriginalColors);
+                            case INVENTORY -> renderer.renderInventory(renderItem, renderOriginalColors, renderModifiedColors, renderTargetWidth, renderTargetHeight, applyPreviewZoomBoost(renderZoomOverride), renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderHighlightedOriginalColors, renderHighlightedFaceIndices, renderFaceTextureOverrides);
                             case MALE -> renderer.renderWorn(renderItem, renderOriginalColors, renderModifiedColors, false, renderTargetWidth, renderTargetHeight,
                                     renderZoomOverride, renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderWearOffsetX, renderWearOffsetY, renderWearOffsetZ, animationFrame, renderHighlightedOriginalColors);
                             case FEMALE -> renderer.renderWorn(renderItem, renderOriginalColors, renderModifiedColors, true, renderTargetWidth, renderTargetHeight,
@@ -2978,10 +4094,10 @@ public class ItemEditorApp {
                             try {
                                 Thread.sleep(60L);
                             } catch (InterruptedException interruptedException) {
-                                Thread.currentThread().interrupt();
+                                // do not re-interrupt — that would poison the next render on this thread
                             }
                             image = switch (renderMode) {
-                                case INVENTORY -> renderer.renderInventory(renderItem, renderOriginalColors, renderModifiedColors, renderTargetWidth, renderTargetHeight, applyPreviewZoomBoost(renderZoomOverride), renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderHighlightedOriginalColors);
+                                case INVENTORY -> renderer.renderInventory(renderItem, renderOriginalColors, renderModifiedColors, renderTargetWidth, renderTargetHeight, applyPreviewZoomBoost(renderZoomOverride), renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderHighlightedOriginalColors, renderHighlightedFaceIndices, renderFaceTextureOverrides);
                                 case MALE -> renderer.renderWorn(renderItem, renderOriginalColors, renderModifiedColors, false, renderTargetWidth, renderTargetHeight,
                                         renderZoomOverride, renderRotationXOverride, renderRotationYOverride, renderRotationZOverride, renderOffsetXOverride, renderOffsetYOverride, renderWearOffsetX, renderWearOffsetY, renderWearOffsetZ, animationFrame, renderHighlightedOriginalColors);
                                 case FEMALE -> renderer.renderWorn(renderItem, renderOriginalColors, renderModifiedColors, true, renderTargetWidth, renderTargetHeight,
@@ -2993,43 +4109,52 @@ public class ItemEditorApp {
                             case MALE -> renderItem.maleEquip1();
                             case FEMALE -> renderItem.femaleEquip1();
                         };
-                        try {
-                            appendLog(renderer.debugDescribeModel(activeModelId));
-                        } catch (RuntimeException ignored) {
-                        }
                         String failure = image == null ? renderer.getFailureReason(activeModelId) : null;
-                        appendLog("[item " + renderItem.id() + "] preview worker done image=" + (image != null) + (failure == null ? "" : " failure=" + failure));
+                        if (failure != null) {
+                            try {
+                                appendLog(renderer.debugDescribeModel(activeModelId));
+                            } catch (RuntimeException ignored) {
+                            }
+                        }
+                        if (initialLoad || failure != null) {
+                            appendLog("[item " + renderItem.id() + "] preview worker done image=" + (image != null) + (failure == null ? "" : " failure=" + failure));
+                        }
                         return new PreviewRenderResult(image, failure);
                     } catch (RuntimeException exception) {
-                        appendLog("[item " + renderItem.id() + "] preview worker fail " + exception.getClass().getSimpleName() + (exception.getMessage() == null ? "" : ": " + exception.getMessage()));
+                        if (!"preview render cancelled".equals(exception.getMessage())) {
+                            appendLog("[item " + renderItem.id() + "] preview worker fail " + exception.getClass().getSimpleName() + (exception.getMessage() == null ? "" : ": " + exception.getMessage()));
+                        }
                         return new PreviewRenderResult(null, exception.getClass().getSimpleName() + (exception.getMessage() == null ? "" : ": " + exception.getMessage()));
                     }
                 }
 
                 @Override
                 protected void done() {
-                    appendLog("[item " + workerItemId + "] preview done enter");
                     if (requestId != renderRequestId) {
-                        appendLog("[item " + workerItemId + "] preview done stale request");
                         return;
                     }
                     if (isCancelled()) {
-                        appendLog("[item " + workerItemId + "] preview done cancelled");
                         renderInProgress = false;
                         loadingAnimationTimer.stop();
                         return;
                     }
                     try {
-                        appendLog("[item " + workerItemId + "] preview done before get");
                         PreviewRenderResult result = get();
-                        appendLog("[item " + workerItemId + "] preview done after get image=" + (result.image() != null));
                         if (result.image() != null) {
                             renderedImage = result.image();
                             renderedFailure = null;
-                            appendLog("[item " + workerItemId + "] preview done assigned image");
                         } else if (renderedImage == null) {
-                            renderedFailure = result.failure();
-                            appendLog("[item " + workerItemId + "] preview done assigned failure");
+                            if ("missing model bytes".equals(result.failure())) {
+                                Timer retryTimer = new Timer(90, retryEvent -> {
+                                    if (requestId == renderRequestId) {
+                                        queueRenderNow();
+                                    }
+                                });
+                                retryTimer.setRepeats(false);
+                                retryTimer.start();
+                            } else {
+                                renderedFailure = result.failure();
+                            }
                         }
                     } catch (Exception exception) {
                         appendLog("[item " + workerItemId + "] preview done catch " + exception.getClass().getSimpleName() + (exception.getMessage() == null ? "" : ": " + exception.getMessage()));
@@ -3039,7 +4164,6 @@ public class ItemEditorApp {
                     } finally {
                         renderInProgress = false;
                         loadingAnimationTimer.stop();
-                        appendLog("[item " + workerItemId + "] preview done repaint");
                         repaint();
                     }
                 }
@@ -3050,7 +4174,6 @@ public class ItemEditorApp {
 
         private void cancelRenderWorker() {
             if (activeRenderWorker != null && !activeRenderWorker.isDone()) {
-                appendLog("[item " + (item == null ? "null" : item.id()) + "] preview cancel active worker");
                 activeRenderWorker.cancel(true);
             }
             activeRenderWorker = null;
@@ -3300,7 +4423,7 @@ public class ItemEditorApp {
             if (!overlayOnly || overlayZoomFactor <= 1.0) {
                 return 1.0;
             }
-            return Math.min(overlayZoomFactor, 3.0);
+            return Math.min(overlayZoomFactor, 6.0);
         }
 
         private double overlayDisplayScale() {
@@ -3424,7 +4547,7 @@ public class ItemEditorApp {
             return (int) Math.round(zoom * PREVIEW_ZOOM_MULTIPLIER);
         }
 
-        private record PreviewRenderKey(int itemId, ItemPreviewMode mode, int inventoryModelId, int maleModelId1, int maleModelId2, int maleModelId3, int femaleModelId1, int femaleModelId2, int femaleModelId3, int zoom, int rotationX, int rotationY, int rotationZ, int offsetX, int offsetY, int wearOffsetX, int wearOffsetY, int wearOffsetZ, int originalColorsHash, int modifiedColorsHash, int highlightedColorsHash, int animationFrame, int width, int height) {
+        private record PreviewRenderKey(int itemId, ItemPreviewMode mode, int inventoryModelId, int maleModelId1, int maleModelId2, int maleModelId3, int femaleModelId1, int femaleModelId2, int femaleModelId3, int zoom, int rotationX, int rotationY, int rotationZ, int offsetX, int offsetY, int wearOffsetX, int wearOffsetY, int wearOffsetZ, int originalColorsHash, int modifiedColorsHash, int highlightedColorsHash, int highlightedFacesHash, int faceTexturesHash, int animationFrame, int width, int height) {
         }
 
         private record PreviewRenderResult(BufferedImage image, String failure) {
@@ -3448,6 +4571,33 @@ public class ItemEditorApp {
         @Override
         public String toString() {
             return label;
+        }
+    }
+
+    private static final class DigitLimitFilter extends DocumentFilter {
+        private final int maxDigits;
+
+        private DigitLimitFilter(int maxDigits) {
+            this.maxDigits = maxDigits;
+        }
+
+        @Override
+        public void insertString(FilterBypass fb, int offset, String string, AttributeSet attr) throws BadLocationException {
+            replace(fb, offset, 0, string, attr);
+        }
+
+        @Override
+        public void replace(FilterBypass fb, int offset, int length, String text, AttributeSet attrs) throws BadLocationException {
+            String incoming = text == null ? "" : text;
+            if (!incoming.chars().allMatch(Character::isDigit)) {
+                return;
+            }
+            String current = fb.getDocument().getText(0, fb.getDocument().getLength());
+            String next = current.substring(0, offset) + incoming + current.substring(offset + length);
+            if (next.length() > maxDigits) {
+                return;
+            }
+            super.replace(fb, offset, length, incoming, attrs);
         }
     }
 }

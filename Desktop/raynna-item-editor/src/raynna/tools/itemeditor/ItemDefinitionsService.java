@@ -1,5 +1,6 @@
 package raynna.tools.itemeditor;
 
+import com.alex.io.OutputStream;
 import com.alex.store.Store;
 import com.alex.utils.Constants;
 
@@ -18,11 +19,14 @@ import java.util.Map;
 import java.util.Set;
 
 public class ItemDefinitionsService {
+    private static final int TEXTURES_INDEX = 9;
+    private static final int SPRITES_INDEX = 8;
 
     private final Path cachePath;
     private final Store store;
     private final com.alex.store.Index index;
     private final com.alex.store.Index modelIndex;
+    private final Object storeLock = new Object();
     private final Map<Integer, ItemDefinitionRecord> rawRecordCache = new HashMap<>();
     private final Map<Integer, ItemDefinitionRecord> resolvedRecordCache = new HashMap<>();
     private final Map<Integer, byte[]> defaultsFileCache = new HashMap<>();
@@ -56,25 +60,115 @@ public class ItemDefinitionsService {
         return cachePath;
     }
 
+    public void save(ItemDefinitionRecord record) {
+        if (record == null) {
+            throw new IllegalArgumentException("record is null");
+        }
+        int archiveId = record.id() >>> 8;
+        int fileId = record.id() & 0xFF;
+        byte[] encoded = encode(record);
+        synchronized (storeLock) {
+            if (!index.putFile(archiveId, fileId, encoded)) {
+                throw new IllegalStateException("Failed to write item " + record.id() + " to cache.");
+            }
+        }
+        rawRecordCache.remove(record.id());
+        resolvedRecordCache.remove(record.id());
+    }
+
     public byte[] loadModelBytes(int modelId) {
         if (modelId < 0) {
             return null;
         }
-        synchronized (modelIndex) {
-            byte[] data = modelIndex.getFile(modelId);
-            if (data == null && modelIndex.archiveExists(modelId) && modelIndex.getLastFileId(modelId) >= 0) {
-                for (int fileId = 0; fileId <= modelIndex.getLastFileId(modelId); fileId++) {
-                    if (!modelIndex.fileExists(modelId, fileId)) {
-                        continue;
-                    }
-                    data = modelIndex.getFile(modelId, fileId);
-                    if (data != null) {
-                        break;
+        for (int attempt = 0; attempt < 4; attempt++) {
+            synchronized (storeLock) {
+                byte[] data = modelIndex.getFile(modelId);
+                if (data == null && modelIndex.archiveExists(modelId) && modelIndex.getLastFileId(modelId) >= 0) {
+                    for (int fileId = 0; fileId <= modelIndex.getLastFileId(modelId); fileId++) {
+                        if (!modelIndex.fileExists(modelId, fileId)) {
+                            continue;
+                        }
+                        data = modelIndex.getFile(modelId, fileId);
+                        if (data != null) {
+                            break;
+                        }
                     }
                 }
+                if (data != null) {
+                    return data;
+                }
+                modelIndex.resetCachedFiles();
             }
-            return data;
+            if (attempt < 3) {
+                try {
+                    Thread.sleep(15L * (attempt + 1));
+                } catch (InterruptedException interruptedException) {
+                    Thread.currentThread().interrupt();
+                    return null;
+                }
+            }
         }
+        return null;
+    }
+
+    private byte[] loadItemBytes(int itemId) {
+        if (itemId < 0) {
+            return null;
+        }
+        int archiveId = itemId >>> 8;
+        int fileId = itemId & 0xFF;
+        for (int attempt = 0; attempt < 4; attempt++) {
+            synchronized (storeLock) {
+                if (!index.archiveExists(archiveId)) {
+                    return null;
+                }
+                byte[] data = index.getFile(archiveId, fileId);
+                if ((data == null || data.length == 0) && index.fileExists(archiveId, fileId)) {
+                    data = index.getFile(archiveId, fileId);
+                }
+                if (data != null && data.length > 0) {
+                    return data;
+                }
+                index.resetCachedFiles();
+            }
+            if (attempt < 3) {
+                try {
+                    Thread.sleep(15L * (attempt + 1));
+                } catch (InterruptedException interruptedException) {
+                    Thread.currentThread().interrupt();
+                    return null;
+                }
+            }
+        }
+        return null;
+    }
+
+    public void saveModelBytes(int modelId, byte[] data) {
+        if (modelId < 0 || data == null || data.length == 0) {
+            throw new IllegalArgumentException("invalid model save");
+        }
+        synchronized (storeLock) {
+            if (!modelIndex.putFile(modelId, 0, data)) {
+                throw new IllegalStateException("Failed to write model " + modelId + " to cache.");
+            }
+            modelIndex.resetCachedFiles();
+        }
+    }
+
+    public List<Integer> listTextureIds() {
+        return listIndexArchiveIds(TEXTURES_INDEX);
+    }
+
+    public List<Integer> listSpriteIds() {
+        return listIndexArchiveIds(SPRITES_INDEX);
+    }
+
+    public byte[] loadTextureBytes(int textureId) {
+        return loadSingleFileIndexBytes(TEXTURES_INDEX, textureId);
+    }
+
+    public byte[] loadSpriteBytes(int spriteId) {
+        return loadSingleFileIndexBytes(SPRITES_INDEX, spriteId);
     }
 
     public byte[] loadConfigBytes(int indexId, int archiveId, int fileId) {
@@ -85,12 +179,56 @@ public class ItemDefinitionsService {
         if (configIndex == null || archiveId < 0 || fileId < 0) {
             return null;
         }
-        synchronized (configIndex) {
+        synchronized (storeLock) {
             if (!configIndex.archiveExists(archiveId) || !configIndex.fileExists(archiveId, fileId)) {
                 return null;
             }
             return configIndex.getFile(archiveId, fileId);
         }
+    }
+
+    private byte[] loadSingleFileIndexBytes(int indexId, int archiveId) {
+        if (archiveId < 0 || indexId < 0 || indexId >= store.getIndexes().length) {
+            return null;
+        }
+        com.alex.store.Index targetIndex = store.getIndexes()[indexId];
+        if (targetIndex == null) {
+            return null;
+        }
+        synchronized (storeLock) {
+            byte[] data = targetIndex.getFile(archiveId);
+            if (data == null && targetIndex.archiveExists(archiveId) && targetIndex.getLastFileId(archiveId) >= 0) {
+                for (int fileId = 0; fileId <= targetIndex.getLastFileId(archiveId); fileId++) {
+                    if (!targetIndex.fileExists(archiveId, fileId)) {
+                        continue;
+                    }
+                    data = targetIndex.getFile(archiveId, fileId);
+                    if (data != null) {
+                        break;
+                    }
+                }
+            }
+            return data;
+        }
+    }
+
+    private List<Integer> listIndexArchiveIds(int indexId) {
+        if (indexId < 0 || indexId >= store.getIndexes().length) {
+            return List.of();
+        }
+        com.alex.store.Index targetIndex = store.getIndexes()[indexId];
+        if (targetIndex == null) {
+            return List.of();
+        }
+        List<Integer> ids = new ArrayList<>();
+        synchronized (storeLock) {
+            for (int archiveId = 0; archiveId <= targetIndex.getLastArchiveId(); archiveId++) {
+                if (targetIndex.archiveExists(archiveId)) {
+                    ids.add(archiveId);
+                }
+            }
+        }
+        return ids;
     }
 
     public byte[] loadDefaultsBytes(int fileId) {
@@ -106,7 +244,7 @@ public class ItemDefinitionsService {
             if (candidate == null) {
                 continue;
             }
-            synchronized (candidate) {
+            synchronized (storeLock) {
                 if (candidate.archiveExists(fileId)) {
                     resolved = candidate.getFile(fileId);
                     if (resolved != null && resolved.length > 0) {
@@ -127,16 +265,18 @@ public class ItemDefinitionsService {
 
     public List<Integer> listItemIds() {
         List<Integer> ids = new ArrayList<>();
-        for (int archiveId = 0; archiveId <= index.getLastArchiveId(); archiveId++) {
-            if (!index.archiveExists(archiveId)) {
-                continue;
-            }
-            int lastFileId = index.getLastFileId(archiveId);
-            for (int fileId = 0; fileId <= lastFileId; fileId++) {
-                if (!index.fileExists(archiveId, fileId)) {
+        synchronized (storeLock) {
+            for (int archiveId = 0; archiveId <= index.getLastArchiveId(); archiveId++) {
+                if (!index.archiveExists(archiveId)) {
                     continue;
                 }
-                ids.add((archiveId << 8) | fileId);
+                int lastFileId = index.getLastFileId(archiveId);
+                for (int fileId = 0; fileId <= lastFileId; fileId++) {
+                    if (!index.fileExists(archiveId, fileId)) {
+                        continue;
+                    }
+                    ids.add((archiveId << 8) | fileId);
+                }
             }
         }
         Collections.sort(ids);
@@ -231,14 +371,20 @@ public class ItemDefinitionsService {
                 .append(" resolved=").append(resolvedRecordCache.containsKey(itemId)).append('\n');
         int archiveId = itemId >>> 8;
         int fileId = itemId & 0xFF;
+        boolean archiveExists;
+        boolean fileExists;
+        synchronized (storeLock) {
+            archiveExists = index.archiveExists(archiveId);
+            fileExists = archiveExists && index.fileExists(archiveId, fileId);
+        }
         builder.append("archive=").append(archiveId)
                 .append(" file=").append(fileId)
-                .append(" archiveExists=").append(index.archiveExists(archiveId));
-        if (index.archiveExists(archiveId)) {
-            builder.append(" fileExists=").append(index.fileExists(archiveId, fileId));
+                .append(" archiveExists=").append(archiveExists);
+        if (archiveExists) {
+            builder.append(" fileExists=").append(fileExists);
         }
         builder.append('\n');
-        byte[] data = index.archiveExists(archiveId) ? index.getFile(archiveId, fileId) : null;
+        byte[] data = loadItemBytes(itemId);
         builder.append("definitionBytes=").append(data == null ? -1 : data.length).append('\n');
         try {
             ItemDefinitionRecord raw = load(itemId, false, new HashSet<>());
@@ -274,12 +420,34 @@ public class ItemDefinitionsService {
         if (cached != null) {
             return cached;
         }
+        if (resolveTemplates) {
+            ItemDefinitionRecord rawCached = rawRecordCache.get(itemId);
+            if (rawCached != null) {
+                if (!visiting.add(itemId)) {
+                    return rawCached;
+                }
+                ItemDefinitionRecord resolved = rawCached;
+                try {
+                    if (rawCached.certTemplateId() != -1 && rawCached.certId() != -1 && rawCached.certId() != itemId) {
+                        resolved = applyNote(rawCached, load(rawCached.certId(), false, visiting));
+                    } else if (rawCached.lendTemplateId() != -1 && rawCached.lendId() != -1 && rawCached.lendId() != itemId) {
+                        resolved = applyLend(rawCached, load(rawCached.lendId(), false, visiting));
+                    }
+                } catch (RuntimeException ignored) {
+                    resolved = rawCached;
+                } finally {
+                    visiting.remove(itemId);
+                }
+                resolvedRecordCache.put(itemId, resolved);
+                return resolved;
+            }
+        }
         int archiveId = itemId >>> 8;
         int fileId = itemId & 0xFF;
         if (!index.archiveExists(archiveId)) {
             throw new IllegalArgumentException("Missing item archive " + archiveId + " for item " + itemId);
         }
-        byte[] data = index.getFile(archiveId, fileId);
+        byte[] data = loadItemBytes(itemId);
         if (data == null || data.length == 0) {
             throw new IllegalArgumentException("Missing item file " + fileId + " in archive " + archiveId + " for item " + itemId);
         }
@@ -748,6 +916,182 @@ public class ItemDefinitionsService {
         @Override
         public String toString() {
             return displayName;
+        }
+    }
+
+    private byte[] encode(ItemDefinitionRecord record) {
+        OutputStream out = new OutputStream(512);
+
+        if (record.modelId() >= 0) {
+            out.writeByte(1);
+            out.writeBigSmart(record.modelId());
+        }
+        out.writeByte(2);
+        out.writeString(record.name() == null ? "null" : record.name());
+        out.writeByte(4);
+        out.writeShort(record.modelZoom());
+        out.writeByte(5);
+        out.writeShort(record.modelRotation1());
+        out.writeByte(6);
+        out.writeShort(record.modelRotation2());
+        writeSignedShortOpcode(out, 7, record.modelOffset1());
+        writeSignedShortOpcode(out, 8, record.modelOffset2());
+        if (record.stackable()) {
+            out.writeByte(11);
+        }
+        out.writeByte(12);
+        out.writeInt(record.price());
+        if (record.equipSlot() >= 0) {
+            out.writeByte(13);
+            out.writeByte(record.equipSlot());
+        }
+        if (record.equipType() >= 0) {
+            out.writeByte(14);
+            out.writeByte(record.equipType());
+        }
+        if (record.membersOnly()) {
+            out.writeByte(16);
+        }
+        writeBigSmartOpcode(out, 23, record.maleEquip1());
+        writeBigSmartOpcode(out, 24, record.maleEquip2());
+        writeBigSmartOpcode(out, 25, record.femaleEquip1());
+        writeBigSmartOpcode(out, 26, record.femaleEquip2());
+        writeOptionOpcodes(out, 30, record.groundOptions());
+        writeOptionOpcodes(out, 35, record.inventoryOptions());
+        writeColorPairs(out, record.originalModelColors(), record.modifiedModelColors());
+        writeTexturePairs(out, record.originalTextureColors(), record.modifiedTextureColors());
+        writeBigSmartOpcode(out, 78, record.maleEquip3());
+        writeBigSmartOpcode(out, 79, record.femaleEquip3());
+        if (record.modelRotation3() != 0) {
+            out.writeByte(95);
+            out.writeShort(record.modelRotation3());
+        }
+        writeUnsignedShortOpcode(out, 97, record.certId());
+        writeUnsignedShortOpcode(out, 98, record.certTemplateId());
+        if (record.modelScaleX() != 128) {
+            out.writeByte(110);
+            out.writeShort(record.modelScaleX());
+        }
+        if (record.modelScaleY() != 128) {
+            out.writeByte(111);
+            out.writeShort(record.modelScaleY());
+        }
+        if (record.modelScaleZ() != 128) {
+            out.writeByte(112);
+            out.writeShort(record.modelScaleZ());
+        }
+        if (record.teamId() >= 0) {
+            out.writeByte(115);
+            out.writeByte(record.teamId());
+        }
+        writeUnsignedShortOpcode(out, 121, record.lendId());
+        writeUnsignedShortOpcode(out, 122, record.lendTemplateId());
+        writeSignedByteTriple(out, 125, record.maleWearOffsetX(), record.maleWearOffsetY(), record.maleWearOffsetZ());
+        writeSignedByteTriple(out, 126, record.femaleWearOffsetX(), record.femaleWearOffsetY(), record.femaleWearOffsetZ());
+        writeParams(out, record.clientScriptData());
+        out.writeByte(0);
+
+        return Arrays.copyOf(out.getBuffer(), out.getOffset());
+    }
+
+    private static void writeBigSmartOpcode(OutputStream out, int opcode, int value) {
+        if (value < 0) {
+            return;
+        }
+        out.writeByte(opcode);
+        out.writeBigSmart(value);
+    }
+
+    private static void writeUnsignedShortOpcode(OutputStream out, int opcode, int value) {
+        if (value < 0) {
+            return;
+        }
+        out.writeByte(opcode);
+        out.writeShort(value);
+    }
+
+    private static void writeSignedShortOpcode(OutputStream out, int opcode, int value) {
+        if (value == 0) {
+            return;
+        }
+        out.writeByte(opcode);
+        out.writeShort(value < 0 ? value + 65536 : value);
+    }
+
+    private static void writeSignedByteTriple(OutputStream out, int opcode, int x, int y, int z) {
+        if (x == 0 && y == 0 && z == 0) {
+            return;
+        }
+        out.writeByte(opcode);
+        out.writeByte((byte) x);
+        out.writeByte((byte) y);
+        out.writeByte((byte) z);
+    }
+
+    private static void writeOptionOpcodes(OutputStream out, int baseOpcode, String[] values) {
+        if (values == null) {
+            return;
+        }
+        for (int i = 0; i < Math.min(5, values.length); i++) {
+            String value = values[i];
+            if (value == null || value.isBlank()) {
+                continue;
+            }
+            out.writeByte(baseOpcode + i);
+            out.writeString(value);
+        }
+    }
+
+    private static void writeColorPairs(OutputStream out, int[] original, int[] modified) {
+        if (original == null || modified == null || original.length == 0 || modified.length == 0) {
+            return;
+        }
+        int count = Math.min(original.length, modified.length);
+        out.writeByte(40);
+        out.writeByte(count);
+        for (int i = 0; i < count; i++) {
+            out.writeShort(original[i]);
+            out.writeShort(modified[i]);
+        }
+    }
+
+    private static void writeTexturePairs(OutputStream out, short[] original, short[] modified) {
+        if (original == null || modified == null || original.length == 0 || modified.length == 0) {
+            return;
+        }
+        int count = Math.min(original.length, modified.length);
+        out.writeByte(41);
+        out.writeByte(count);
+        for (int i = 0; i < count; i++) {
+            out.writeShort(original[i] & 0xFFFF);
+            out.writeShort(modified[i] & 0xFFFF);
+        }
+    }
+
+    private static void writeParams(OutputStream out, Map<Integer, Object> params) {
+        if (params == null || params.isEmpty()) {
+            return;
+        }
+        List<Map.Entry<Integer, Object>> entries = params.entrySet().stream()
+                .filter(entry -> entry.getKey() >= 0 && entry.getValue() != null)
+                .toList();
+        if (entries.isEmpty()) {
+            return;
+        }
+        out.writeByte(249);
+        out.writeByte(entries.size());
+        for (Map.Entry<Integer, Object> entry : entries) {
+            Object value = entry.getValue();
+            boolean stringValue = value instanceof String;
+            out.writeByte(stringValue ? 1 : 0);
+            out.write24BitInt(entry.getKey());
+            if (stringValue) {
+                out.writeString((String) value);
+            } else if (value instanceof Number number) {
+                out.writeInt(number.intValue());
+            } else {
+                out.writeString(String.valueOf(value));
+            }
         }
     }
 }
