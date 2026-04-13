@@ -44,8 +44,8 @@ public class ItemEditorApp {
     private static final Color TEXT = new Color(198, 198, 198);
     private static final Color MUTED = new Color(165, 165, 165);
     private static final Color ACCENT = new Color(220, 138, 0);
-    private static final String[] DEFAULT_GROUND_OPTIONS = {"take", "examine", "destroy"};
-    private static final String[] DEFAULT_INVENTORY_OPTIONS = {"wear", "wield", "eat", "drink", "use", "drop", "destroy", "check", "empty", "open", "rub"};
+    private static final String[] DEFAULT_GROUND_OPTIONS = {"Take", "Examine", "Destroy"};
+    private static final String[] DEFAULT_INVENTORY_OPTIONS = {"Wear", "Wield", "Eat", "Drink", "Use", "Drop", "Destroy", "Check", "Empty", "Open", "Rub", "Check-charges", "Charge"};
     private static final double PREVIEW_ZOOM_MULTIPLIER = 1.0;
     private static final Path APP_BASE = Paths.get("").toAbsolutePath().normalize();
     private static final Path RECENT_PATHS_FILE = APP_BASE.resolve("recent_paths.dat");
