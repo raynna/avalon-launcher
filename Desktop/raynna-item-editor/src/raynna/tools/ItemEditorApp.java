@@ -163,6 +163,7 @@ public class ItemEditorApp {
     private final List<String> recentCachePaths;
     private JSplitPane bottomSplitPane;
     private JPanel bottomConsolePanel;
+    private boolean shutdownStarted;
 
     public ItemEditorApp() {
         frame = new JFrame("Item Editor");
@@ -309,10 +310,16 @@ public class ItemEditorApp {
     }
 
     private void buildUi() {
-        frame.setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
+        frame.setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
         frame.setSize(1540, 980);
         frame.setLocationRelativeTo(null);
         frame.getContentPane().setBackground(BG);
+        frame.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent e) {
+                requestShutdown();
+            }
+        });
 
         JPanel main = new JPanel(new BorderLayout(10, 10));
         main.setBackground(BG);
@@ -330,6 +337,35 @@ public class ItemEditorApp {
         // Get the split pane from bottom panel and set its top component
         main.add(centerPanel, BorderLayout.CENTER);
         frame.setContentPane(main);
+    }
+
+    private void requestShutdown() {
+        if (shutdownStarted) {
+            return;
+        }
+        shutdownStarted = true;
+        frame.setVisible(false);
+        shutdownApplication();
+        frame.dispose();
+        SwingUtilities.invokeLater(() -> System.exit(0));
+    }
+
+    private void shutdownApplication() {
+        filterDebounceTimer.stop();
+        selectionDebounceTimer.stop();
+        wornPreviewAnimationTimer.stop();
+        filterRequestId++;
+        selectionRequestId++;
+        cancelActiveFilterWorker();
+        if (activeCacheLoadWorker != null && !activeCacheLoadWorker.isDone()) {
+            activeCacheLoadWorker.cancel(true);
+        }
+        activeCacheLoadWorker = null;
+        if (activeItemSelectionWorker != null && !activeItemSelectionWorker.isDone()) {
+            activeItemSelectionWorker.cancel(true);
+        }
+        activeItemSelectionWorker = null;
+        itemPreviewPanel.clear();
     }
 
     private JPanel buildItemToolbar() {

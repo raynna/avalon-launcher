@@ -29,9 +29,12 @@ internal sealed class MainForm : Form
     private string DataDir => LauncherDataRoot;
     private string RuntimeDir => Path.Combine(DataDir, "runtime");
     private string PackageDir => Path.Combine(DataDir, "editor");
+    private string AppDir => Path.Combine(PackageDir, "app");
+    private string AppBinDir => Path.Combine(AppDir, "bin");
+    private string AppLibDir => Path.Combine(AppDir, "lib");
     private string StatePath => Path.Combine(DataDir, "state.json");
     private string LogPath => Path.Combine(DataDir, "launcher.log");
-    private string LaunchScriptPath => Path.Combine(PackageDir, "app", "bin", "raynna-item-editor.bat");
+    private string LaunchScriptPath => Path.Combine(AppBinDir, "raynna-item-editor.bat");
 
     public MainForm()
     {
@@ -262,18 +265,24 @@ internal sealed class MainForm : Form
     {
         var javaBinDir = Path.GetDirectoryName(javaExe) ?? string.Empty;
         var javaHome = TryGetJavaHomeFromExe(javaExe);
-        Log($"Starting editor script via cmd.exe. Script={LaunchScriptPath} JavaHome={javaHome}");
+        if (!Directory.Exists(AppLibDir))
+        {
+            throw new InvalidOperationException("Installed editor library directory was not found.");
+        }
+
+        var classPath = BuildEditorClassPath(AppLibDir);
+        Log($"Starting editor directly. Java={javaExe} AppLib={AppLibDir} JavaHome={javaHome}");
         var psi = new ProcessStartInfo
         {
-            FileName = "cmd.exe",
-            WorkingDirectory = Path.GetDirectoryName(LaunchScriptPath) ?? PackageDir,
+            FileName = javaExe,
+            WorkingDirectory = AppBinDir,
             UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
             CreateNoWindow = true
         };
-        psi.ArgumentList.Add("/c");
-        psi.ArgumentList.Add(LaunchScriptPath);
+        psi.ArgumentList.Add("-classpath");
+        psi.ArgumentList.Add(classPath);
+        psi.ArgumentList.Add("raynna.tools.ItemEditorApp");
+
         if (!string.IsNullOrWhiteSpace(javaHome))
         {
             psi.Environment["JAVA_HOME"] = javaHome;
@@ -288,29 +297,11 @@ internal sealed class MainForm : Form
             psi.Environment["PATH"] = javaBinDir + ";" + (psi.Environment.ContainsKey("PATH") ? psi.Environment["PATH"] : string.Empty);
         }
 
-        var process = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        process.OutputDataReceived += (_, e) =>
-        {
-            if (!string.IsNullOrWhiteSpace(e.Data))
-            {
-                Log($"[editor] {e.Data}");
-            }
-        };
-        process.ErrorDataReceived += (_, e) =>
-        {
-            if (!string.IsNullOrWhiteSpace(e.Data))
-            {
-                Log($"[editor] {e.Data}");
-            }
-        };
-
+        using var process = new Process { StartInfo = psi };
         if (!process.Start())
         {
             throw new InvalidOperationException("Failed to start editor process.");
         }
-
-        process.BeginOutputReadLine();
-        process.BeginErrorReadLine();
 
         if (process.WaitForExit(2500))
         {
@@ -320,6 +311,13 @@ internal sealed class MainForm : Form
                 throw new InvalidOperationException($"Editor process exited immediately with code {process.ExitCode}. See log: {LogPath}");
             }
         }
+    }
+
+    private static string BuildEditorClassPath(string libDir)
+    {
+        var entries = new List<string> { libDir };
+        entries.AddRange(Directory.EnumerateFiles(libDir, "*.jar").OrderBy(path => path, StringComparer.OrdinalIgnoreCase));
+        return string.Join(Path.PathSeparator, entries);
     }
 
     private async Task<ManifestModel> GetManifestAsync(LauncherConfig config)
